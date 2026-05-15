@@ -1,55 +1,54 @@
-# Prerequisites
-*.d
+# --------------- IDE 配置 & 临时文件 ---------------
+.metadata/
+.mcuxpressoido_packages_support/
+.settings/
+.vscode/
+temp_backup/
+**/.cproject
+**/.project
+*.launch
+*.idx
+*.hidx
 
-# Object files
-*.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
+# --------------- 编译产物 & 中间文件 ---------------
+**/Debug/
+**/Release/
 *.hex
-
-# Debug files
-*.dSYM/
+*.bin
+*.elf
+*.axf
+*.o
+*.obj
+*.d
+*.mk
+*.ld
+*.map
 *.su
-*.idb
-*.pdb
+*.sym
+*.pch
+*.s
+*.asm
+*.dSYM/
+CMakeCache.txt
+CMakeFiles/
+Makefile
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# --------------- 临时文件 & 日志 ---------------
+*.log
+*.tmp
+*.swp
+*.swo
+*.swn
+*.report
+*.analysis
+*.jlink
+*.jlinklog
 
-# debug information files
-*.dwo
+# --------------- 其他无需跟踪的文件 ---------------
+*.bak
+*.orig
+*.pyc
+__pycache__/
+venv/
+.env/
+/.metadata
