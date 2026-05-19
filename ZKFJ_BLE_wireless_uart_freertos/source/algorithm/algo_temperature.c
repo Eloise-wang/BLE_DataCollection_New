@@ -1,25 +1,9 @@
-/*
- * pt1000_lut.h
- *
- *  Created on: 2026年5月16日
- *      Author: elois
- */
+#include "algo_temperature.h"
 
-#ifndef ALGORITHM_PT1000_LUT_H_
-#define ALGORITHM_PT1000_LUT_H_
+static const int16_t s_tempStartC = -200;
+static const int16_t s_tempStepC  = 1;
 
-#include <stdint.h>
-
-#define LUT_TEMP_START_C      (-200)
-#define LUT_TEMP_STEP_C       (1)
-#define LUT_TABLE_SIZE        (301)
-#define TEMP_SCALING_FACTOR   (100)
-#define RES_SCALING_FACTOR    (100)
-
-/**
- * @brief PT1000 resistance table (float) from -200�C to +100�C.
- */
-const float PT1000_LUT_FLOAT[] = {
+static const float s_pt1000_lut[] = {
     185.2008f, 189.5223f, 193.8402f, 198.1545f, 202.4651f, 206.7722f, 211.0758f, 215.3758f,
     219.6723f, 223.9653f, 228.2548f, 232.5409f, 236.8236f, 241.1029f, 245.3787f, 249.6513f,
     253.9205f, 258.1864f, 262.4490f, 266.7083f, 270.9643f, 275.2172f, 279.4668f, 283.7132f,
@@ -60,4 +44,67 @@ const float PT1000_LUT_FLOAT[] = {
     1369.8746f, 1373.6714f, 1377.4671f, 1381.2616f, 1385.0550f,
 };
 
-#endif /* ALGORITHM_PT1000_LUT_H_ */
+float algo_pt1000_resistance_to_temperature_c(float resistance_ohm)
+{
+    const uint32_t n = (uint32_t)(sizeof(s_pt1000_lut) / sizeof(s_pt1000_lut[0]));
+    if (n < 2U)
+    {
+        return 0.0f;
+    }
+
+    if (resistance_ohm <= s_pt1000_lut[0])
+    {
+        return (float)s_tempStartC;
+    }
+
+    if (resistance_ohm >= s_pt1000_lut[n - 1U])
+    {
+        return (float)(s_tempStartC + (int16_t)(n - 1U) * s_tempStepC);
+    }
+
+    uint32_t low  = 0U;
+    uint32_t high = n - 1U;
+
+    while (low <= high)
+    {
+        const uint32_t mid = low + (high - low) / 2U;
+        const float rm     = s_pt1000_lut[mid];
+        if (resistance_ohm < rm)
+        {
+            if (mid == 0U)
+            {
+                break;
+            }
+            high = mid - 1U;
+        }
+        else if (resistance_ohm > rm)
+        {
+            low = mid + 1U;
+        }
+        else
+        {
+            return (float)(s_tempStartC + (int16_t)mid * s_tempStepC);
+        }
+    }
+
+    uint32_t index_low = high;
+    if (index_low >= (n - 1U))
+    {
+        index_low = n - 2U;
+    }
+
+    const float r1 = s_pt1000_lut[index_low];
+    const float r2 = s_pt1000_lut[index_low + 1U];
+    const float t1 = (float)(s_tempStartC + (int16_t)index_low * s_tempStepC);
+    const float t2 = (float)(s_tempStartC + (int16_t)(index_low + 1U) * s_tempStepC);
+    const float dr = r2 - r1;
+
+    if (dr == 0.0f)
+    {
+        return t1;
+    }
+
+    return t1 + (t2 - t1) * (resistance_ohm - r1) / dr;
+}
+
+

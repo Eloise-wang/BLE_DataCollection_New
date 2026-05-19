@@ -161,16 +161,13 @@ void BSP_ADC_Init(void)
     BSP_ADC_InitHw();
 }
 
-uint16_t BSP_ADC_ReadRaw(uint32_t channelNumber)
+bool BSP_ADC_ReadRaw(uint32_t channelNumber, uint16_t *outRaw)
 {
-    uint16_t raw;
-
-    if (!BSP_ADC_TryReadRaw(channelNumber, &raw, BSP_ADC_DEFAULT_TIMEOUT_MS))
+    if (outRaw == NULL)
     {
-        return BSP_ADC_INVALID_RAW;
+        return false;
     }
-
-    return raw;
+    return BSP_ADC_TryReadRaw(channelNumber, outRaw, BSP_ADC_DEFAULT_TIMEOUT_MS);
 }
 
 
@@ -193,4 +190,3 @@ void BSP_ADC_Deinit(void)
     LPADC_Deinit(BSP_ADC_BASE);
     VREF_Deinit(VREF0);
 }
-
