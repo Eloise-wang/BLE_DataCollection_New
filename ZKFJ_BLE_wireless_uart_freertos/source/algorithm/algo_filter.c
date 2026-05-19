@@ -5,7 +5,7 @@
  *      Author: elois
  */
 
-#include "filter.h"
+#include <algo_filter.h>
 
 bool filter_trimmed_mean_u16_8_drop_min_max(const uint16_t samples[FILTER_TRIMMED_MEAN_SAMPLE_COUNT],
                                             uint16_t *out_mean)

@@ -5,8 +5,8 @@
  *      Author: elois
  */
 
-#ifndef ALGORITHM_FILTER_H_
-#define ALGORITHM_FILTER_H_
+#ifndef ALGORITHM_ALGO_FILTER_H_
+#define ALGORITHM_ALGO_FILTER_H_
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -35,4 +35,4 @@ bool filter_trimmed_mean_u16_8_read_drop_min_max(filter_read_u16_fn read_fn, voi
 #endif
 
 
-#endif // ALGORITHM_FILTER_H_
+#endif // ALGORITHM_ALGO_FILTER_H_
