@@ -29,4 +29,4 @@ float algo_voltage_to_resistance_pt1000(float voltage);
 }
 #endif
 
-
+#endif /* ALGORITHM_ALGO_RAW_CONVERT_H_ */
