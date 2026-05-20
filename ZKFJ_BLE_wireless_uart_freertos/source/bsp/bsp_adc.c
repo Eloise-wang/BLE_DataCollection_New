@@ -19,7 +19,6 @@
 #define BSP_ADC_USER_CMDID          1U
 
 static bool s_adcInitialized    = false;
-static bool s_autoCalibFinished = false;
 static bool s_mutexCreated      = false;
 static OSA_MUTEX_HANDLE_DEFINE(s_adcMutexHandle);
 
@@ -53,8 +52,7 @@ static void BSP_ADC_InitHw(void)
     lpadcConfig.conversionAverageMode   = kLPADC_ConversionAverage128;
     LPADC_Init(BSP_ADC_BASE, &lpadcConfig);
 
-    LPADC_PrepareAutoCalibration(BSP_ADC_BASE);
-    s_autoCalibFinished = false;
+    LPADC_DoAutoCalibration(BSP_ADC_BASE);
 
     if (!s_mutexCreated)
     {
@@ -89,12 +87,6 @@ bool BSP_ADC_TryReadRaw(uint32_t channelNumber, uint16_t *outRaw, uint32_t timeo
             *outRaw = BSP_ADC_INVALID_RAW;
             return false;
         }
-    }
-
-    if (!s_autoCalibFinished)
-    {
-        LPADC_FinishAutoCalibration(BSP_ADC_BASE);
-        s_autoCalibFinished = true;
     }
 
 #if (defined(FSL_FEATURE_LPADC_FIFO_COUNT) && (FSL_FEATURE_LPADC_FIFO_COUNT == 2))
@@ -135,7 +127,7 @@ bool BSP_ADC_TryReadRaw(uint32_t channelNumber, uint16_t *outRaw, uint32_t timeo
             break;
         }
 
-        if (0U == __get_IPSR())
+        if ((0U == __get_IPSR()) && ((OSA_TimeGetMsec() - startMs) >= 1U))
         {
             OSA_TimeDelay(1U);
         }
@@ -179,7 +171,6 @@ void BSP_ADC_Deinit(void)
     }
 
     s_adcInitialized    = false;
-    s_autoCalibFinished = false;
 
     if (s_mutexCreated)
     {

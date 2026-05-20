@@ -15,7 +15,7 @@ extern "C" {
 #endif
 
 #ifndef ALGO_ADC_VREF_V
-#define ALGO_ADC_VREF_V 1.8f
+#define ALGO_ADC_VREF_V 3.3f
 #endif
 
 #ifndef ALGO_ADC_FULL_RANGE
