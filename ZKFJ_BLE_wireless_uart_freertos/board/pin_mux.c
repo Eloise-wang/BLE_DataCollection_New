@@ -13,20 +13,21 @@ package_id: KW45B41Z83AFTA
 mcu_data: ksdk2_0
 processor_version: 24.12.10
 pin_labels:
-- {pin_num: '44', pin_signal: ADC0_A8/PTC6/WUU0_P11/LPSPI1_PCS1/TPM1_CH5/FLEXIO0_D22, label: electricity, identifier: SW;SW2;SW3;electricity}
+- {pin_num: '44', pin_signal: ADC0_A8/PTC6/WUU0_P11/LPSPI1_PCS1/TPM1_CH5/FLEXIO0_D22, label: Battery Detection, identifier: SW;SW2;SW3;electricity;Battery;Battery_Detection}
 - {pin_num: '24', pin_signal: ADC0_B5/PTD1/SPC0_LPREQ/NMI_b/RF_GPO_4, label: Send_LED, identifier: SW3;SW2;Send_LED}
-- {pin_num: '18', pin_signal: ADC0_A15/CMP0_IN2/PTA21/WUU0_P5/LPSPI0_PCS3/LPUART0_RX/EWM0_OUT_b/TPM0_CH0/RF_GPO_3/RF_GPO_7/FLEXIO0_D8/RF_GPO_10, label: pressure,
-  identifier: LED_R;pressure}
+- {pin_num: '18', pin_signal: ADC0_A15/CMP0_IN2/PTA21/WUU0_P5/LPSPI0_PCS3/LPUART0_RX/EWM0_OUT_b/TPM0_CH0/RF_GPO_3/RF_GPO_7/FLEXIO0_D8/RF_GPO_10, label: pressure Detection,
+  identifier: LED_R;pressure;pressure_Detection}
 - {pin_num: '46', pin_signal: ADC0_B10/PTB0/WUU0_P13/LPSPI1_PCS0/TPM1_CH0/FLEXIO0_D26, label: LED1/LPSPI1_PCS0, identifier: LED1;LPSPI1_PCS0}
-- {pin_num: '14', pin_signal: CMP1_IN0/PTA19/WUU0_P4/LPSPI0_SCK/LPUART0_RTS_b/LPI2C0_SCL/TPM0_CH2/RF_GPO_1, label: P_LED, identifier: LED_G;P_LED}
-- {pin_num: '17', pin_signal: ADC0_A14/CMP0_IN3/PTA20/LPSPI0_PCS2/LPUART0_TX/EWM0_IN/TPM0_CH1/RF_GPO_2/FLEXIO0_D7, label: temp, identifier: LED_B;temp}
+- {pin_num: '14', pin_signal: CMP1_IN0/PTA19/WUU0_P4/LPSPI0_SCK/LPUART0_RTS_b/LPI2C0_SCL/TPM0_CH2/RF_GPO_1, label: Collection_LED, identifier: LED_G;P_LED;Collection_LED}
+- {pin_num: '17', pin_signal: ADC0_A14/CMP0_IN3/PTA20/LPSPI0_PCS2/LPUART0_TX/EWM0_IN/TPM0_CH1/RF_GPO_2/FLEXIO0_D7, label: temp Detection, identifier: LED_B;temp;temp_Detection}
 - {pin_num: '1', pin_signal: ADC0_B13/PTB3/WUU0_P14/LPSPI1_SOUT/LPUART1_RX/TPM1_CH3/FLEXIO0_D29, label: SO_IO1/SO-IO1/SO-IO1, identifier: SO_IO1}
 - {pin_num: '2', pin_signal: PTB4/WUU0_P15/LPSPI1_PCS3/LPUART1_CTS_b/LPI2C1_SDA/I3C0_SDA/TRGMUX0_IN0/FLEXIO0_D30, label: 'ON', identifier: HLD_RST;HOLD_RESET;ON}
 - {pin_num: '3', pin_signal: PTB5/LPSPI1_PCS2/LPUART1_RTS_b/LPI2C1_SCL/I3C0_SCL/TRGMUX0_OUT0/FLEXIO0_D31, label: Electricity_LED, identifier: WP_IO2;Electricity_LED}
 - {pin_num: '48', pin_signal: ADC0_B12/PTB2/LPSPI1_SCK/LPUART1_TX/TPM1_CH2/FLEXIO0_D28, label: SCK, identifier: SCKSI_IO1}
 - {pin_num: '47', pin_signal: ADC0_B11/PTB1/LPSPI1_SIN/TPM1_CH1/FLEXIO0_D27, label: SI_IO1/SI-IO1/SI-IO1, identifier: SI_IO1}
-- {pin_num: '45', pin_signal: PTC7/WUU0_P12/NMI_b/RF_NOT_ALLOWED/TRGMUX0_IN3/TRGMUX0_OUT3/SFA0_CLK/TPM1_CLKIN/TPM2_CLKIN/CLKOUT/FLEXIO0_D23, label: L_LED, identifier: L_LED}
-- {pin_num: '13', pin_signal: CMP1_IN1/PTA18/LPSPI0_SOUT/LPUART0_CTS_b/LPI2C0_SDA/TPM0_CH3/RF_GPO_0/LPUART0_RX, label: T_LED, identifier: P_LED;T_LED}
+- {pin_num: '45', pin_signal: PTC7/WUU0_P12/NMI_b/RF_NOT_ALLOWED/TRGMUX0_IN3/TRGMUX0_OUT3/SFA0_CLK/TPM1_CLKIN/TPM2_CLKIN/CLKOUT/FLEXIO0_D23, label: Electricity_LED,
+  identifier: L_LED;Electricity_LED}
+- {pin_num: '13', pin_signal: CMP1_IN1/PTA18/LPSPI0_SOUT/LPUART0_CTS_b/LPI2C0_SDA/TPM0_CH3/RF_GPO_0/LPUART0_RX, label: Send_LED, identifier: P_LED;T_LED;Send_LED}
 - {pin_num: '25', pin_signal: ADC0_A6/PTD2/LPTMR0_ALT3/TAMPER0/RF_GPO_5, label: BLE_LED, identifier: BLE_LED}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
@@ -53,24 +54,20 @@ void BOARD_InitBootPins(void)
 BOARD_InitPinButton0:
 - options: {callFromInitBoot: 'false', prefix: BOARD_INITPINBUTTON0_, coreID: cm33, enableClock: 'true'}
 - pin_list:
-  - {pin_num: '24', peripheral: GPIOD, signal: 'GPIO, 1', pin_signal: ADC0_B5/PTD1/SPC0_LPREQ/NMI_b/RF_GPO_4, identifier: Send_LED, pull_select: down, pull_enable: disable,
-    passive_filter: disable, open_drain: disable}
   - {pin_num: '18', peripheral: ADC0, signal: 'A, 15', pin_signal: ADC0_A15/CMP0_IN2/PTA21/WUU0_P5/LPSPI0_PCS3/LPUART0_RX/EWM0_OUT_b/TPM0_CH0/RF_GPO_3/RF_GPO_7/FLEXIO0_D8/RF_GPO_10,
-    identifier: pressure}
-  - {pin_num: '17', peripheral: ADC0, signal: 'A, 14', pin_signal: ADC0_A14/CMP0_IN3/PTA20/LPSPI0_PCS2/LPUART0_TX/EWM0_IN/TPM0_CH1/RF_GPO_2/FLEXIO0_D7, identifier: temp}
+    identifier: pressure_Detection}
+  - {pin_num: '17', peripheral: ADC0, signal: 'A, 14', pin_signal: ADC0_A14/CMP0_IN3/PTA20/LPSPI0_PCS2/LPUART0_TX/EWM0_IN/TPM0_CH1/RF_GPO_2/FLEXIO0_D7, identifier: temp_Detection}
+  - {pin_num: '44', peripheral: ADC0, signal: 'A, 8', pin_signal: ADC0_A8/PTC6/WUU0_P11/LPSPI1_PCS1/TPM1_CH5/FLEXIO0_D22, identifier: Battery_Detection}
   - {pin_num: '43', peripheral: CAN0, signal: RX, pin_signal: PTC5/LPSPI1_PCS0/CAN0_RX/LPI2C1_SDA/TPM1_CH4/TPM2_CH1/FLEXIO0_D21}
   - {pin_num: '42', peripheral: CAN0, signal: TX, pin_signal: PTC4/WUU0_P10/LPSPI1_SIN/CAN0_TX/LPI2C1_SCL/TPM2_CH0/FLEXIO0_D20}
-  - {pin_num: '3', peripheral: GPIOB, signal: 'GPIO, 5', pin_signal: PTB5/LPSPI1_PCS2/LPUART1_RTS_b/LPI2C1_SCL/I3C0_SCL/TRGMUX0_OUT0/FLEXIO0_D31, identifier: Electricity_LED}
-  - {pin_num: '45', peripheral: GPIOC, signal: 'GPIO, 7', pin_signal: PTC7/WUU0_P12/NMI_b/RF_NOT_ALLOWED/TRGMUX0_IN3/TRGMUX0_OUT3/SFA0_CLK/TPM1_CLKIN/TPM2_CLKIN/CLKOUT/FLEXIO0_D23}
-  - {pin_num: '13', peripheral: GPIOA, signal: 'GPIO, 18', pin_signal: CMP1_IN1/PTA18/LPSPI0_SOUT/LPUART0_CTS_b/LPI2C0_SDA/TPM0_CH3/RF_GPO_0/LPUART0_RX, identifier: T_LED,
-    pull_select: up}
-  - {pin_num: '14', peripheral: GPIOA, signal: 'GPIO, 19', pin_signal: CMP1_IN0/PTA19/WUU0_P4/LPSPI0_SCK/LPUART0_RTS_b/LPI2C0_SCL/TPM0_CH2/RF_GPO_1, identifier: P_LED}
-  - {pin_num: '25', peripheral: GPIOD, signal: 'GPIO, 2', pin_signal: ADC0_A6/PTD2/LPTMR0_ALT3/TAMPER0/RF_GPO_5}
-  - {pin_num: '44', peripheral: ADC0, signal: 'A, 8', pin_signal: ADC0_A8/PTC6/WUU0_P11/LPSPI1_PCS1/TPM1_CH5/FLEXIO0_D22, identifier: electricity}
-  - {pin_num: '2', peripheral: GPIOB, signal: 'GPIO, 4', pin_signal: PTB4/WUU0_P15/LPSPI1_PCS3/LPUART1_CTS_b/LPI2C1_SDA/I3C0_SDA/TRGMUX0_IN0/FLEXIO0_D30, identifier: 'ON',
-    pull_select: up}
   - {pin_num: '39', peripheral: LPUART1, signal: RX, pin_signal: PTC2/WUU0_P9/LPSPI1_SOUT/LPUART1_RX/LPI2C1_SCLS/TPM1_CH2/I3C0_PUR/FLEXIO0_D18, pull_select: up}
   - {pin_num: '40', peripheral: LPUART1, signal: TX, pin_signal: PTC3/LPSPI1_SCK/LPUART1_TX/LPI2C1_SDAS/TPM1_CH3/FLEXIO0_D19}
+  - {pin_num: '45', peripheral: GPIOC, signal: 'GPIO, 7', pin_signal: PTC7/WUU0_P12/NMI_b/RF_NOT_ALLOWED/TRGMUX0_IN3/TRGMUX0_OUT3/SFA0_CLK/TPM1_CLKIN/TPM2_CLKIN/CLKOUT/FLEXIO0_D23,
+    identifier: Electricity_LED}
+  - {pin_num: '13', peripheral: GPIOA, signal: 'GPIO, 18', pin_signal: CMP1_IN1/PTA18/LPSPI0_SOUT/LPUART0_CTS_b/LPI2C0_SDA/TPM0_CH3/RF_GPO_0/LPUART0_RX, identifier: Send_LED,
+    pull_select: down}
+  - {pin_num: '14', peripheral: GPIOA, signal: 'GPIO, 19', pin_signal: CMP1_IN0/PTA19/WUU0_P4/LPSPI0_SCK/LPUART0_RTS_b/LPI2C0_SCL/TPM0_CH2/RF_GPO_1, identifier: Collection_LED}
+  - {pin_num: '25', peripheral: GPIOD, signal: 'GPIO, 2', pin_signal: ADC0_A6/PTD2/LPTMR0_ALT3/TAMPER0/RF_GPO_5}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
 /* clang-format on */
@@ -86,41 +83,26 @@ void BOARD_InitPinButton0(void)
     /* Clock Configuration: Peripheral clocks are enabled; module does not stall low power mode entry */
     CLOCK_EnableClock(kCLOCK_PortA);
     /* Clock Configuration: Peripheral clocks are enabled; module does not stall low power mode entry */
-    CLOCK_EnableClock(kCLOCK_PortB);
-    /* Clock Configuration: Peripheral clocks are enabled; module does not stall low power mode entry */
     CLOCK_EnableClock(kCLOCK_PortC);
 
     /* PORTA18 (pin 13) is configured as PTA18 */
-    PORT_SetPinMux(BOARD_INITPINBUTTON0_T_LED_PORT, BOARD_INITPINBUTTON0_T_LED_PIN, kPORT_MuxAsGpio);
+    PORT_SetPinMux(BOARD_INITPINBUTTON0_Send_LED_PORT, BOARD_INITPINBUTTON0_Send_LED_PIN, kPORT_MuxAsGpio);
 
     PORTA->PCR[18] = ((PORTA->PCR[18] &
                        /* Mask bits to zero which are setting */
                        (~(PORT_PCR_PS_MASK)))
 
-                      /* Pull Select: Enables internal pullup resistor. */
-                      | PORT_PCR_PS(PCR_PS_ps1));
+                      /* Pull Select: Enables internal pulldown resistor. */
+                      | PORT_PCR_PS(PCR_PS_ps0));
 
     /* PORTA19 (pin 14) is configured as PTA19 */
-    PORT_SetPinMux(BOARD_INITPINBUTTON0_P_LED_PORT, BOARD_INITPINBUTTON0_P_LED_PIN, kPORT_MuxAsGpio);
+    PORT_SetPinMux(BOARD_INITPINBUTTON0_Collection_LED_PORT, BOARD_INITPINBUTTON0_Collection_LED_PIN, kPORT_MuxAsGpio);
 
     /* PORTA20 (pin 17) is configured as ADC0_A14 */
-    PORT_SetPinMux(BOARD_INITPINBUTTON0_temp_PORT, BOARD_INITPINBUTTON0_temp_PIN, kPORT_PinDisabledOrAnalog);
+    PORT_SetPinMux(BOARD_INITPINBUTTON0_temp_Detection_PORT, BOARD_INITPINBUTTON0_temp_Detection_PIN, kPORT_PinDisabledOrAnalog);
 
     /* PORTA21 (pin 18) is configured as ADC0_A15 */
-    PORT_SetPinMux(BOARD_INITPINBUTTON0_pressure_PORT, BOARD_INITPINBUTTON0_pressure_PIN, kPORT_PinDisabledOrAnalog);
-
-    /* PORTB4 (pin 2) is configured as PTB4 */
-    PORT_SetPinMux(BOARD_INITPINBUTTON0_ON_PORT, BOARD_INITPINBUTTON0_ON_PIN, kPORT_MuxAsGpio);
-
-    PORTB->PCR[4] = ((PORTB->PCR[4] &
-                      /* Mask bits to zero which are setting */
-                      (~(PORT_PCR_PS_MASK)))
-
-                     /* Pull Select: Enables internal pullup resistor. */
-                     | PORT_PCR_PS(PCR_PS_ps1));
-
-    /* PORTB5 (pin 3) is configured as PTB5 */
-    PORT_SetPinMux(BOARD_INITPINBUTTON0_Electricity_LED_PORT, BOARD_INITPINBUTTON0_Electricity_LED_PIN, kPORT_MuxAsGpio);
+    PORT_SetPinMux(BOARD_INITPINBUTTON0_pressure_Detection_PORT, BOARD_INITPINBUTTON0_pressure_Detection_PIN, kPORT_PinDisabledOrAnalog);
 
     /* PORTC2 (pin 39) is configured as LPUART1_RX */
     PORT_SetPinMux(PORTC, 2U, kPORT_MuxAlt3);
@@ -142,29 +124,10 @@ void BOARD_InitPinButton0(void)
     PORT_SetPinMux(PORTC, 5U, kPORT_MuxAlt3);
 
     /* PORTC6 (pin 44) is configured as ADC0_A8 */
-    PORT_SetPinMux(BOARD_INITPINBUTTON0_electricity_PORT, BOARD_INITPINBUTTON0_electricity_PIN, kPORT_PinDisabledOrAnalog);
+    PORT_SetPinMux(BOARD_INITPINBUTTON0_Battery_Detection_PORT, BOARD_INITPINBUTTON0_Battery_Detection_PIN, kPORT_PinDisabledOrAnalog);
 
     /* PORTC7 (pin 45) is configured as PTC7 */
-    PORT_SetPinMux(BOARD_INITPINBUTTON0_L_LED_PORT, BOARD_INITPINBUTTON0_L_LED_PIN, kPORT_MuxAsGpio);
-
-    /* PORTD1 (pin 24) is configured as PTD1 */
-    PORT_SetPinMux(BOARD_INITPINBUTTON0_Send_LED_PORT, BOARD_INITPINBUTTON0_Send_LED_PIN, kPORT_MuxAsGpio);
-
-    PORTD->PCR[1] = ((PORTD->PCR[1] &
-                      /* Mask bits to zero which are setting */
-                      (~(PORT_PCR_PS_MASK | PORT_PCR_PE_MASK | PORT_PCR_PFE_MASK | PORT_PCR_ODE_MASK)))
-
-                     /* Pull Select: Enables internal pulldown resistor. */
-                     | PORT_PCR_PS(PCR_PS_ps0)
-
-                     /* Pull Enable: Disables. */
-                     | PORT_PCR_PE(PCR_PE_pe0)
-
-                     /* Passive Filter Enable: Disables. */
-                     | PORT_PCR_PFE(PCR_PFE_pfe0)
-
-                     /* Open Drain Enable: Disables. */
-                     | PORT_PCR_ODE(PCR_ODE_ode0));
+    PORT_SetPinMux(BOARD_INITPINBUTTON0_Electricity_LED_PORT, BOARD_INITPINBUTTON0_Electricity_LED_PIN, kPORT_MuxAsGpio);
 
     /* PORTD2 (pin 25) is configured as PTD2 */
     PORT_SetPinMux(BOARD_INITPINBUTTON0_BLE_LED_PORT, BOARD_INITPINBUTTON0_BLE_LED_PIN, kPORT_MuxAsGpio);

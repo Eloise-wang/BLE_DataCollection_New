@@ -6,7 +6,7 @@
 #include "algo_raw_convert.h"
 #include "algo_temperature.h"
 #include "bsp_adc.h"
-#include "filter.h"
+#include "algo_filter.h"
 #include "fsl_os_abstraction.h"
 
 typedef struct

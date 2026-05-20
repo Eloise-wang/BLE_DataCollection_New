@@ -25,94 +25,74 @@ extern "C" {
  */
 void BOARD_InitBootPins(void);
 
-#define PCR_ODE_ode0 0x00u /*!<@brief Open Drain Enable: Disables */
-#define PCR_PE_pe0 0x00u   /*!<@brief Pull Enable: Disables */
-#define PCR_PFE_pfe0 0x00u /*!<@brief Passive Filter Enable: Disables */
-#define PCR_PS_ps0 0x00u   /*!<@brief Pull Select: Enables internal pulldown resistor */
-#define PCR_PS_ps1 0x01u   /*!<@brief Pull Select: Enables internal pullup resistor */
+#define PCR_PS_ps0 0x00u /*!<@brief Pull Select: Enables internal pulldown resistor */
+#define PCR_PS_ps1 0x01u /*!<@brief Pull Select: Enables internal pullup resistor */
 
-/*! @name PORTD1 (number 24), Send_LED
-  @{ */
-
-/* Symbols to be used with GPIO driver */
-#define BOARD_INITPINBUTTON0_Send_LED_GPIO GPIOD               /*!<@brief GPIO peripheral base pointer */
-#define BOARD_INITPINBUTTON0_Send_LED_GPIO_PIN_MASK (1U << 1U) /*!<@brief GPIO pin mask */
-
-/* Symbols to be used with PORT driver */
-#define BOARD_INITPINBUTTON0_Send_LED_PORT PORTD               /*!<@brief PORT peripheral base pointer */
-#define BOARD_INITPINBUTTON0_Send_LED_PIN 1U                   /*!<@brief PORT pin number */
-#define BOARD_INITPINBUTTON0_Send_LED_PIN_MASK (1U << 1U)      /*!<@brief PORT pin mask */
-                                                               /* @} */
-
-/*! @name PORTA21 (number 18), pressure
+/*! @name PORTA21 (number 18), pressure Detection
   @{ */
 
 /* Symbols to be used with PORT driver */
-#define BOARD_INITPINBUTTON0_pressure_PORT PORTA                /*!<@brief PORT peripheral base pointer */
-#define BOARD_INITPINBUTTON0_pressure_PIN 21U                   /*!<@brief PORT pin number */
-#define BOARD_INITPINBUTTON0_pressure_PIN_MASK (1U << 21U)      /*!<@brief PORT pin mask */
-                                                                /* @} */
+#define BOARD_INITPINBUTTON0_pressure_Detection_PORT PORTA                /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINBUTTON0_pressure_Detection_PIN 21U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINBUTTON0_pressure_Detection_PIN_MASK (1U << 21U)      /*!<@brief PORT pin mask */
+                                                                          /* @} */
 
-/*! @name PORTA20 (number 17), temp
+/*! @name PORTA20 (number 17), temp Detection
   @{ */
 
 /* Symbols to be used with PORT driver */
-#define BOARD_INITPINBUTTON0_temp_PORT PORTA                /*!<@brief PORT peripheral base pointer */
-#define BOARD_INITPINBUTTON0_temp_PIN 20U                   /*!<@brief PORT pin number */
-#define BOARD_INITPINBUTTON0_temp_PIN_MASK (1U << 20U)      /*!<@brief PORT pin mask */
-                                                            /* @} */
-
-/*! @name PORTB5 (number 3), Electricity_LED
-  @{ */
-
-/* Symbols to be used with GPIO driver */
-#define BOARD_INITPINBUTTON0_Electricity_LED_GPIO GPIOB               /*!<@brief GPIO peripheral base pointer */
-#define BOARD_INITPINBUTTON0_Electricity_LED_GPIO_PIN_MASK (1U << 5U) /*!<@brief GPIO pin mask */
-
-/* Symbols to be used with PORT driver */
-#define BOARD_INITPINBUTTON0_Electricity_LED_PORT PORTB               /*!<@brief PORT peripheral base pointer */
-#define BOARD_INITPINBUTTON0_Electricity_LED_PIN 5U                   /*!<@brief PORT pin number */
-#define BOARD_INITPINBUTTON0_Electricity_LED_PIN_MASK (1U << 5U)      /*!<@brief PORT pin mask */
+#define BOARD_INITPINBUTTON0_temp_Detection_PORT PORTA                /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINBUTTON0_temp_Detection_PIN 20U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINBUTTON0_temp_Detection_PIN_MASK (1U << 20U)      /*!<@brief PORT pin mask */
                                                                       /* @} */
 
-/*! @name PORTC7 (number 45), L_LED
+/*! @name PORTC6 (number 44), Battery Detection
+  @{ */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINBUTTON0_Battery_Detection_PORT PORTC               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINBUTTON0_Battery_Detection_PIN 6U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINBUTTON0_Battery_Detection_PIN_MASK (1U << 6U)      /*!<@brief PORT pin mask */
+                                                                        /* @} */
+
+/*! @name PORTC7 (number 45), Electricity_LED
   @{ */
 
 /* Symbols to be used with GPIO driver */
-#define BOARD_INITPINBUTTON0_L_LED_GPIO GPIOC               /*!<@brief GPIO peripheral base pointer */
-#define BOARD_INITPINBUTTON0_L_LED_GPIO_PIN_MASK (1U << 7U) /*!<@brief GPIO pin mask */
+#define BOARD_INITPINBUTTON0_Electricity_LED_GPIO GPIOC               /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINBUTTON0_Electricity_LED_GPIO_PIN_MASK (1U << 7U) /*!<@brief GPIO pin mask */
 
 /* Symbols to be used with PORT driver */
-#define BOARD_INITPINBUTTON0_L_LED_PORT PORTC               /*!<@brief PORT peripheral base pointer */
-#define BOARD_INITPINBUTTON0_L_LED_PIN 7U                   /*!<@brief PORT pin number */
-#define BOARD_INITPINBUTTON0_L_LED_PIN_MASK (1U << 7U)      /*!<@brief PORT pin mask */
-                                                            /* @} */
+#define BOARD_INITPINBUTTON0_Electricity_LED_PORT PORTC               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINBUTTON0_Electricity_LED_PIN 7U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINBUTTON0_Electricity_LED_PIN_MASK (1U << 7U)      /*!<@brief PORT pin mask */
+                                                                      /* @} */
 
-/*! @name PORTA18 (number 13), T_LED
+/*! @name PORTA18 (number 13), Send_LED
   @{ */
 
 /* Symbols to be used with GPIO driver */
-#define BOARD_INITPINBUTTON0_T_LED_GPIO GPIOA                /*!<@brief GPIO peripheral base pointer */
-#define BOARD_INITPINBUTTON0_T_LED_GPIO_PIN_MASK (1U << 18U) /*!<@brief GPIO pin mask */
+#define BOARD_INITPINBUTTON0_Send_LED_GPIO GPIOA                /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINBUTTON0_Send_LED_GPIO_PIN_MASK (1U << 18U) /*!<@brief GPIO pin mask */
 
 /* Symbols to be used with PORT driver */
-#define BOARD_INITPINBUTTON0_T_LED_PORT PORTA                /*!<@brief PORT peripheral base pointer */
-#define BOARD_INITPINBUTTON0_T_LED_PIN 18U                   /*!<@brief PORT pin number */
-#define BOARD_INITPINBUTTON0_T_LED_PIN_MASK (1U << 18U)      /*!<@brief PORT pin mask */
-                                                             /* @} */
+#define BOARD_INITPINBUTTON0_Send_LED_PORT PORTA                /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINBUTTON0_Send_LED_PIN 18U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINBUTTON0_Send_LED_PIN_MASK (1U << 18U)      /*!<@brief PORT pin mask */
+                                                                /* @} */
 
-/*! @name PORTA19 (number 14), P_LED
+/*! @name PORTA19 (number 14), Collection_LED
   @{ */
 
 /* Symbols to be used with GPIO driver */
-#define BOARD_INITPINBUTTON0_P_LED_GPIO GPIOA                /*!<@brief GPIO peripheral base pointer */
-#define BOARD_INITPINBUTTON0_P_LED_GPIO_PIN_MASK (1U << 19U) /*!<@brief GPIO pin mask */
+#define BOARD_INITPINBUTTON0_Collection_LED_GPIO GPIOA                /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINBUTTON0_Collection_LED_GPIO_PIN_MASK (1U << 19U) /*!<@brief GPIO pin mask */
 
 /* Symbols to be used with PORT driver */
-#define BOARD_INITPINBUTTON0_P_LED_PORT PORTA                /*!<@brief PORT peripheral base pointer */
-#define BOARD_INITPINBUTTON0_P_LED_PIN 19U                   /*!<@brief PORT pin number */
-#define BOARD_INITPINBUTTON0_P_LED_PIN_MASK (1U << 19U)      /*!<@brief PORT pin mask */
-                                                             /* @} */
+#define BOARD_INITPINBUTTON0_Collection_LED_PORT PORTA                /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINBUTTON0_Collection_LED_PIN 19U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINBUTTON0_Collection_LED_PIN_MASK (1U << 19U)      /*!<@brief PORT pin mask */
+                                                                      /* @} */
 
 /*! @name PORTD2 (number 25), BLE_LED
   @{ */
@@ -127,35 +107,13 @@ void BOARD_InitBootPins(void);
 #define BOARD_INITPINBUTTON0_BLE_LED_PIN_MASK (1U << 2U)      /*!<@brief PORT pin mask */
                                                               /* @} */
 
-/*! @name PORTC6 (number 44), electricity
-  @{ */
-
-/* Symbols to be used with PORT driver */
-#define BOARD_INITPINBUTTON0_electricity_PORT PORTC               /*!<@brief PORT peripheral base pointer */
-#define BOARD_INITPINBUTTON0_electricity_PIN 6U                   /*!<@brief PORT pin number */
-#define BOARD_INITPINBUTTON0_electricity_PIN_MASK (1U << 6U)      /*!<@brief PORT pin mask */
-                                                                  /* @} */
-
-/*! @name PORTB4 (number 2), ON
-  @{ */
-
-/* Symbols to be used with GPIO driver */
-#define BOARD_INITPINBUTTON0_ON_GPIO GPIOB               /*!<@brief GPIO peripheral base pointer */
-#define BOARD_INITPINBUTTON0_ON_GPIO_PIN_MASK (1U << 4U) /*!<@brief GPIO pin mask */
-
-/* Symbols to be used with PORT driver */
-#define BOARD_INITPINBUTTON0_ON_PORT PORTB               /*!<@brief PORT peripheral base pointer */
-#define BOARD_INITPINBUTTON0_ON_PIN 4U                   /*!<@brief PORT pin number */
-#define BOARD_INITPINBUTTON0_ON_PIN_MASK (1U << 4U)      /*!<@brief PORT pin mask */
-                                                         /* @} */
-
 /*!
  * @brief Configures pin routing and optionally pin electrical features.
  *
  */
 void BOARD_InitPinButton0(void);
 
-/*! @name PORTC6 (number 44), electricity
+/*! @name PORTC6 (number 44), Battery Detection
   @{ */
 
 /* Symbols to be used with GPIO driver */
@@ -199,7 +157,7 @@ void BOARD_InitPinSWO(void);
  */
 void BOARD_InitPinLED1(void);
 
-/*! @name PORTA21 (number 18), pressure
+/*! @name PORTA21 (number 18), pressure Detection
   @{ */
 
 /* Symbols to be used with GPIO driver */
@@ -218,7 +176,7 @@ void BOARD_InitPinLED1(void);
  */
 void BOARD_InitPinLED2(void);
 
-/*! @name PORTA19 (number 14), P_LED
+/*! @name PORTA19 (number 14), Collection_LED
   @{ */
 
 /* Symbols to be used with GPIO driver */
@@ -237,7 +195,7 @@ void BOARD_InitPinLED2(void);
  */
 void BOARD_InitPinLED3(void);
 
-/*! @name PORTA20 (number 17), temp
+/*! @name PORTA20 (number 17), temp Detection
   @{ */
 
 /* Symbols to be used with GPIO driver */
@@ -304,7 +262,7 @@ void BOARD_UnInitPinLPUART1_RX(void);
  */
 void BOARD_UnInitPinLPUART1_TX(void);
 
-/*! @name PORTC6 (number 44), electricity
+/*! @name PORTC6 (number 44), Battery Detection
   @{ */
 
 /* Symbols to be used with PORT driver */
@@ -355,7 +313,7 @@ void BOARD_UnInitPinSWO(void);
  */
 void BOARD_UnInitPinLED1(void);
 
-/*! @name PORTA21 (number 18), pressure
+/*! @name PORTA21 (number 18), pressure Detection
   @{ */
 
 /* Symbols to be used with PORT driver */
@@ -370,7 +328,7 @@ void BOARD_UnInitPinLED1(void);
  */
 void BOARD_UnInitPinLED2(void);
 
-/*! @name PORTA19 (number 14), P_LED
+/*! @name PORTA19 (number 14), Collection_LED
   @{ */
 
 /* Symbols to be used with PORT driver */
@@ -385,7 +343,7 @@ void BOARD_UnInitPinLED2(void);
  */
 void BOARD_UnInitPinLED3(void);
 
-/*! @name PORTA20 (number 17), temp
+/*! @name PORTA20 (number 17), temp Detection
   @{ */
 
 /* Symbols to be used with PORT driver */
