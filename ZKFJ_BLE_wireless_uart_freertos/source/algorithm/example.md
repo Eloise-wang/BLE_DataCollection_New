@@ -1,111 +1,66 @@
-系统采用周期性主从调度架构。Master 调度任务作为系统的时间基准，在采集周期到达时，同步触发 ADC 底层突发采样，并原子地读取 CAN 数据缓存，确保所有物理量（温、压、液位）基于同一系统时间戳进行打包。所有原始数据与诊断掩码经逻辑归一化后统一写入 Flash，避免了异步采集导致的数据时空失准问题
+# UART设置
 
-疑问：使采集失败，也要讲数据存入数据库，是否要定义和错误码匹配的哨兵值？还是直接存错误码到flash中？
+39号引脚 -----> LPUART1_RX
 
-有一点我要补充：因为传感器存在误差，压力传感器只要接入，当显示电压0.55到0.6V左右时，都是0MPa，当检测没有0.6V，有时候只有0.58V左右时，也可能是正常的，压力传感器只要损坏或者未接传感器，就是0V左右。
+40号引脚 -----> LPUART1_RX
 
-至于温度的话，虽然量程是-200-80℃，但在实际使用中，基本不会达到这个多，因此不用管。至于温度传感器没接显示的数值在什么范围，目前我还不能确定。
+### 1. 架构规划建议
 
+- **驱动层 (BSP Layer)**：在 `bsp_uart.c/.h` 中负责引脚映射、时钟初始化和物理传输。
+- **应用层 (App/Task Layer)**：**不需要**为普通的调试打印单独创建 Task，而是利用 FreeRTOS 的 `Log` 或现有的串口功能进行封装。
 
-另外我觉得传感器错误码不要太详细，因为我们没有这么准确的范围
+### 2. 实施细节
 
-我觉得主要是这几种：1.采集成功；2.底层ADC读取超时；3.传感器损坏或者未接传感器；
+#### A. BSP 层：物理配置与开关
 
-实际上在采集时，我们不可能一直盯着看，错误又很难复现，因此我觉得底层的错误码要更详细，到底是哪一步出现了问题，这样才方便改错。 
+建议在 `bsp_uart.h` 中使用宏定义作为总开关，这样在编译时如果关闭，代码就不会被编译进去，**节省 Flash 空间且零运行时消耗**。
 
-并且很重要的一点是:因为采集时间过长，我们不可能一直盯着，并且在实际采集的过程中，工程师不能跟车，因此所有的错误数据都是查看flash中的数据才行；
+C
 
-参考如下；
+```
+// bsp_uart.h
+#define BSP_UART_ENABLE  1  // 设为 0 则完全禁用，不占用资源
 
-#ifndef APP_SENSOR_H
-#define APP_SENSOR_H
+#if BSP_UART_ENABLE
+void BSP_UART_Init(void);
+void BSP_UART_Print(const char *fmt, ...);
+#else
+#define BSP_UART_Init()
+#define BSP_UART_Print(...)
+#endif
+```
 
-#include <stdint.h>
-#include <stdbool.h>
+- **引脚配置**: 在 `bsp_uart.c` 的 `BSP_UART_Init` 中配置 39/40 引脚（MUX 设置）。注意：您提到 39/40 都是 RX，建议检查硬件原理图确认 40 是否为 TX。
 
-// 定义错误码 (位掩码，方便记录多种复合故障)
-#define SENSOR_DIAG_OK          (0x00U)
-#define SENSOR_DIAG_TIMEOUT     (1U << 0)
-#define SENSOR_DIAG_VOLT_LOW    (1U << 1) // 可能是短路
-#define SENSOR_DIAG_VOLT_HIGH   (1U << 2) // 可能是断线
-#define SENSOR_DIAG_INVALID     (1U << 3) // 转换结果不在物理合理区间
+#### B. 如何做到“不影响其他任务”？
 
-// 传感器数据包裹结构体
-typedef struct {
-    float temp_celsius;
-    float pressure_mpa;
-    uint16_t temp_raw;
-    uint16_t press_raw;
-    uint8_t  temp_diag;
-    uint8_t  press_diag;
-    uint32_t timestamp_ms;
-} app_sensor_data_t;
+这是最关键的一点。UART 传输速度较慢，如果直接使用轮询（Polling）方式，CPU 会在 `while(!USART_GetStatusFlags(...))` 中死等，导致蓝牙或采集任务卡死。
 
-// 初始化接口
-void APP_Sensor_Init(void);
+**方案：使用 DMA 或 中断 (Interrupt) 方式发送。**
 
-// 核心业务函数：采集并处理 (被 Master 调度器调用)
-void APP_Sensor_Collect(app_sensor_data_t *out_data);
+1. **DMA 异步发送 (推荐)**:
+   - 调用 `BSP_UART_Print` 时，将字符串放入一个软件 FIFO 队列（Ring Buffer），触发 DMA 将数据搬运到 UART 寄存器。
+   - DMA 发送完成后触发中断，在中断里处理发送完成标志。
+   - 这样 `BSP_UART_Print` 执行完只需几微秒，**采集任务和蓝牙任务几乎感觉不到被占用**。
+2. **避免在中断中使用 printf**: 严禁在采集任务的中断里直接调用 `printf`，因为它会阻塞。请仅在 `Task` 中调用封装好的 `BSP_UART_Print`。
 
-#endif /* APP_SENSOR_H */
+### 3. 需要创建文件吗？
 
+- **BSP 层**: 必须创建 `bsp_uart.c` 和 `bsp_uart.h`，这是最规范的做法，保持底层驱动的独立性。
+- **App/Task 层**: **不需要**新建文件。直接在现有的 `main.c` 或需要打印的 `app_xxx.c` 中引用 `bsp_uart.h` 即可。
 
-#include "app_sensor.h"
-#include "bsp_adc.h"
-#include "algo_filter.h"
-#include "algo_raw_convert.h"
-#include "algo_temperature.h"
-#include "algo_pressure.h"
+### 总结规划表
 
-// 内部 ADC 读取包装，适配滤波算法回调
-static bool ADC_Read_Wrapper(void *ctx, uint16_t *out_value) {
-    uint32_t channel = (uint32_t)(uintptr_t)ctx;
-    return BSP_ADC_TryReadRaw(channel, out_value, 5); // 5ms 超时，快速突发采集
-}
+| **层次**     | **模块**      | **职责规划**                                               |
+| ------------ | ------------- | ---------------------------------------------------------- |
+| **驱动层**   | `bsp_uart.c`  | 负责硬件寄存器初始化、引脚 MUX 配置、DMA/中断传输配置。    |
+| **控制开关** | `bsp_uart.h`  | 定义 `BSP_UART_ENABLE` 宏，实现条件编译。                  |
+| **应用调用** | 现有 App 任务 | 在业务代码中通过 `BSP_UART_Print` 打印日志，无需额外任务。 |
 
-void APP_Sensor_Init(void) {
-    BSP_ADC_Init(); // 底层初始化，包含自动校准
-}
+### 下一步建议
 
-void APP_Sensor_Collect(app_sensor_data_t *out_data) {
-    out_data->timestamp_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    out_data->temp_diag = SENSOR_DIAG_OK;
-    out_data->press_diag = SENSOR_DIAG_OK;
+1. **确认引脚**: 检查 `39/40` 引脚在芯片手册（MCXW716 DataSheet）中的定义，确保 TX/RX 无误。
+2. **配置 DMA**: 如果您需要极高性能的打印，请使用 SDK 中的 `LPUART_TransferCreateHandleDMA`。
+3. **防止递归调用**: 确保在打印时不会触发新的中断从而引发递归打印，这会导致系统崩掉。
 
-    // --- 1. 温度处理逻辑 ---
-    if (!filter_trimmed_mean_u16_8_read_drop_min_max(ADC_Read_Wrapper, (void*)BSP_ADC_TEMPERATURE_CHANNEL, &out_data->temp_raw)) {
-        out_data->temp_diag |= SENSOR_DIAG_TIMEOUT;
-    } else {
-        float voltage = algo_adc_raw_to_voltage(out_data->temp_raw);
-        // 温度断线保护：若电压异常高（断线）
-        if (voltage > 3.25f) out_data->temp_diag |= SENSOR_DIAG_VOLT_HIGH;
-        else if (voltage < 0.05f) out_data->temp_diag |= SENSOR_DIAG_VOLT_LOW;
-        
-        if (out_data->temp_diag == SENSOR_DIAG_OK) {
-            float res = algo_voltage_to_resistance_pt1000(voltage);
-            out_data->temp_celsius = algo_pt1000_resistance_to_temperature_c(res);
-        } else {
-            out_data->temp_celsius = -999.0f; // 哨兵值
-        }
-    }
-
-    // --- 2. 压力处理逻辑 (含零点带处理) ---
-    if (!filter_trimmed_mean_u16_8_read_drop_min_max(ADC_Read_Wrapper, (void*)BSP_ADC_PRESSURE_CHANNEL, &out_data->press_raw)) {
-        out_data->press_diag |= SENSOR_DIAG_TIMEOUT;
-    } else {
-        float voltage = algo_adc_raw_to_voltage(out_data->press_raw);
-        
-        // 软零点带处理：[0.55V, 0.62V] 强制归零
-        if (voltage >= 0.55f && voltage <= 0.62f) {
-            out_data->pressure_mpa = 0.0f;
-        } else if (voltage < 0.2f) {
-            out_data->press_diag |= SENSOR_DIAG_VOLT_LOW; // 真正断线
-        } else {
-            out_data->pressure_mpa = algo_voltage_to_pressure_mpa(voltage);
-        }
-
-        if (out_data->press_diag != SENSOR_DIAG_OK) {
-            out_data->pressure_mpa = -99.0f; // 哨兵值
-        }
-    }
-}
+您目前的工程目录中已经有 `drivers/fsl_lpuart.c`，直接使用该驱动配合您的 `bsp_uart` 进行封装即可。

@@ -7,7 +7,7 @@
 
 #include "bsp_led.h"
 
-#include "board/pin_mux.h"
+#include "pin_mux.h"
 #include "fsl_gpio.h"
 
 typedef struct
