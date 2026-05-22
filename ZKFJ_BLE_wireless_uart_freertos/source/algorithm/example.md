@@ -107,6 +107,24 @@ SOF(1)=0x5A  LEN(2)  TASK_ID(8)  OFFSET(4)  TOTAL_BYTES(4)  DATA(N)  CRC16(2)
 
 CRC16 同样用 CRC-16/CCITT-FALSE（校验范围从 LEN 到 DATA）。
 
+## 6.1) 实时采集数据上报（设备 → 上位机）
+
+实时上报时，同样复用 0x5A 数据帧：
+- DATA：直接放一条 `sensor_record_t`（例如 12 字节）
+- OFFSET：用“记录序号 * 记录长度”即可（上位机可用它做简单去重/排序）
+- TOTAL_BYTES：实时上报场景下填 0（表示“不是回收文件，不提供总长度”）
+
+## 6.2) 工作状态上报（设备 → 上位机）
+
+工作状态单独用一个状态帧，避免和数据帧混淆：
+```
+SOF(1)=0x5B  LEN(2)  TASK_ID(8)  EVENT_BITS(4)  BATTERY(1)  RESERVED(1)  CRC16(2)
+```
+
+- EVENT_BITS：直接把设备侧 FreeRTOS 事件组 bit 打包上报（例如采集中、存储就绪、队列丢包）
+- BATTERY：电量百分比 0~100
+- 上报频率：建议 1 秒 1 次（只要 BLE 已连接即可）
+
 ## 7) 协议层结构（建议放在 source/protocol/）
 
 ```txt

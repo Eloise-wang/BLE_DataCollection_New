@@ -5,6 +5,7 @@
 #include "app_can.h"
 #include "app_global.h"
 #include "app_sensor.h"
+#include "proto_cmd_handler.h"
 #include "task.h"
 
 static int16_t task_sensor_temp_to_centi_c(float celsius)
@@ -42,6 +43,8 @@ void TASK_SensorCollectTask(void *pvParameters)
     APP_Sensor_Init();
     APP_CAN_Init();
 
+    uint32_t stream_seq = 0U;
+
     TickType_t lastWake = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(1000U);
 
@@ -59,6 +62,8 @@ void TASK_SensorCollectTask(void *pvParameters)
         {
             continue;
         }
+
+        const uint64_t task_id = TASK_GetActiveTaskId();
 
         APP_CAN_Process();
 
@@ -103,5 +108,8 @@ void TASK_SensorCollectTask(void *pvParameters)
                 }
             }
         }
+
+        (void)PROTO_SendRealtimeRecord(task_id, &record, (uint16_t)sizeof(record), stream_seq);
+        stream_seq++;
     }
 }

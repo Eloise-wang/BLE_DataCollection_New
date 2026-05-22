@@ -18,6 +18,7 @@ extern "C" {
 
 #define PROTO_CMD_SOF               ((uint8_t)0xA5U)
 #define PROTO_DATA_SOF              ((uint8_t)0x5AU)
+#define PROTO_STATUS_SOF            ((uint8_t)0x5BU)
 
 #define PROTO_CMD_ACK_OFFSET        ((uint8_t)0x80U)
 
@@ -75,6 +76,13 @@ bool PROTO_DataBuildFrame(uint64_t task_id,
                           uint8_t *out,
                           size_t out_size,
                           size_t *out_len);
+
+bool PROTO_StatusBuildFrame(uint64_t task_id,
+                            uint32_t event_bits,
+                            uint8_t battery_percent,
+                            uint8_t *out,
+                            size_t out_size,
+                            size_t *out_len);
 
 #ifdef __cplusplus
 }

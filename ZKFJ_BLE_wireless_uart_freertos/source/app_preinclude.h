@@ -50,7 +50,8 @@
 
 #define gPasskeyValue_c                 999999
 
-#define gWuart_AutoStart_c              0
+#define gWuart_AutoStart_c              1
+#define gWuart_AutoStartGapRole_c       gGapPeripheral_c
 
 /*! *********************************************************************************
  *     Framework Configuration

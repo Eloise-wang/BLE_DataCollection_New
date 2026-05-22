@@ -220,3 +220,48 @@ bool PROTO_DataBuildFrame(uint64_t task_id,
     return true;
 }
 
+bool PROTO_StatusBuildFrame(uint64_t task_id,
+                            uint32_t event_bits,
+                            uint8_t battery_percent,
+                            uint8_t *out,
+                            size_t out_size,
+                            size_t *out_len)
+{
+    if ((out == NULL) || (out_len == NULL))
+    {
+        return false;
+    }
+
+    const uint16_t payload_len = (uint16_t)(8U + 4U + 1U + 1U);
+    const size_t frame_len = (size_t)1U + (size_t)2U + (size_t)payload_len + (size_t)2U;
+    if (out_size < frame_len)
+    {
+        return false;
+    }
+
+    size_t pos = 0U;
+    out[pos++] = PROTO_STATUS_SOF;
+    out[pos++] = (uint8_t)(payload_len & 0xFFU);
+    out[pos++] = (uint8_t)((payload_len >> 8) & 0xFFU);
+
+    for (uint8_t i = 0U; i < 8U; i++)
+    {
+        out[pos++] = (uint8_t)((task_id >> (8U * i)) & 0xFFU);
+    }
+
+    out[pos++] = (uint8_t)(event_bits & 0xFFU);
+    out[pos++] = (uint8_t)((event_bits >> 8) & 0xFFU);
+    out[pos++] = (uint8_t)((event_bits >> 16) & 0xFFU);
+    out[pos++] = (uint8_t)((event_bits >> 24) & 0xFFU);
+
+    out[pos++] = battery_percent;
+    out[pos++] = 0U;
+
+    const uint16_t crc = proto_crc16_calc(&out[1], (size_t)2U + (size_t)payload_len);
+    out[pos++] = (uint8_t)(crc & 0xFFU);
+    out[pos++] = (uint8_t)((crc >> 8) & 0xFFU);
+
+    *out_len = pos;
+    return true;
+}
+

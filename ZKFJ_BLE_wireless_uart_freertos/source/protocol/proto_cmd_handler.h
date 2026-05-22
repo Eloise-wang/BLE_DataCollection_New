@@ -20,8 +20,13 @@ typedef void (*proto_tx_fn_t)(const uint8_t *data, size_t len, void *user);
 
 void PROTO_CmdInit(void);
 void PROTO_CmdSetTx(proto_tx_fn_t fn, void *user);
+void PROTO_SetBleConnected(bool connected);
 
 void PROTO_OnRxBytes(const uint8_t *data, size_t len);
+
+void PROTO_TxRaw(const uint8_t *data, size_t len);
+void PROTO_SendStatusNow(void);
+bool PROTO_SendRealtimeRecord(uint64_t task_id, const void *record, uint16_t record_size, uint32_t seq);
 
 void PROTO_CmdTask(void *pvParameters);
 void PROTO_UartRxTask(void *pvParameters);

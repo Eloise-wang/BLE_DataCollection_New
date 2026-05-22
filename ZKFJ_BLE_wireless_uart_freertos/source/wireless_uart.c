@@ -56,6 +56,7 @@
 #include "board_comp.h"
 #include "wireless_uart.h"
 #include "proto_cmd_handler.h"
+#include "bsp_uart.h"
 
 #if defined(K32W232H_SERIES) || defined(KW45B41Z82_SERIES) || defined(KW45B41Z83_SERIES) || defined(K32W1480_SERIES) || \
     defined(KW47B42ZB7_cm33_core0_SERIES) || defined(KW47B42ZB6_cm33_core0_SERIES) || defined(KW47B42ZB3_cm33_core0_SERIES) || \
@@ -86,6 +87,7 @@
 #define mAppUartFlushIntervalInMs_c     (7)     /* Flush Timeout in Ms */
 
 #define mBatteryLevelReportInterval_c   (10)    /* battery level report interval in seconds  */
+#define mStatusReportInterval_c         (1)     /* status report interval in seconds */
 
 #define gAllowToBlock_d                 (TRUE)
 #define gNoBlock_d                      (FALSE)
@@ -176,6 +178,7 @@ static void ScanningTimerCallback(void *pParam);
 #endif /* gWuart_CentralRole_c */
 static void UartStreamFlushTimerCallback(void *pData);
 static void BatteryMeasurementTimerCallback(void *pParam);
+static void StatusReportTimerCallback(void *pParam);
 #if (defined(gAppButtonCnt_c) && (gAppButtonCnt_c == 1))
 static void SwitchPressTimerCallback(void *pParam);
 #endif
@@ -234,6 +237,11 @@ static basConfig_t mBasServiceConfig = {(uint16_t)service_battery, 0, mBasValidC
 static TIMER_MANAGER_HANDLE_DEFINE(mAppTimerId);
 static TIMER_MANAGER_HANDLE_DEFINE(mUartStreamFlushTimerId);
 static TIMER_MANAGER_HANDLE_DEFINE(mBatteryMeasurementTimerId);
+static TIMER_MANAGER_HANDLE_DEFINE(mStatusReportTimerId);
+
+
+static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user);
+static void BleApp_ProtoTxUart(const uint8_t *data, size_t len, void *user);
 
 /* If the board has only one button, multiplex the required functionalities on it using an application timer */
 #if (gAppButtonCnt_c == 1)
@@ -634,6 +642,8 @@ static void BleApp_ConnectionCallback
             /* Subscribe client*/
             (void)Wus_Subscribe(peerDeviceId);
             (void)Bas_Subscribe(&mBasServiceConfig, peerDeviceId);
+            PROTO_CmdSetTx(BleApp_ProtoTxBle, NULL);
+            PROTO_SetBleConnected(true);
 
             /* UI */
             LedStopFlashingAllLeds();
@@ -648,6 +658,13 @@ static void BleApp_ConnectionCallback
                 (void)TM_InstallCallback((timer_handle_t)mBatteryMeasurementTimerId, BatteryMeasurementTimerCallback, NULL);
                 (void)TM_Start((timer_handle_t)mBatteryMeasurementTimerId,
                             (uint8_t)kTimerModeLowPowerTimer | (uint8_t)kTimerModeSetSecondTimer, mBatteryLevelReportInterval_c);
+            }
+
+            if (TM_IsTimerActive((timer_handle_t)mStatusReportTimerId) == 0U)
+            {
+                (void)TM_InstallCallback((timer_handle_t)mStatusReportTimerId, StatusReportTimerCallback, NULL);
+                (void)TM_Start((timer_handle_t)mStatusReportTimerId,
+                               (uint8_t)kTimerModeLowPowerTimer | (uint8_t)kTimerModeSetSecondTimer, mStatusReportInterval_c);
             }
 
 #if gAppUsePairing_d
@@ -734,6 +751,9 @@ static void BleApp_ConnectionCallback
             if(mcActiveConnNo == 0U)
             {
                 (void)TM_Stop((timer_handle_t)mBatteryMeasurementTimerId);
+                (void)TM_Stop((timer_handle_t)mStatusReportTimerId);
+                PROTO_SetBleConnected(false);
+                PROTO_CmdSetTx(BleApp_ProtoTxUart, NULL);
             }
             /* recalculate minimum of maximum MTU's of all connected devices */
             mAppUartBufferSize                       = mAppUartBufferSize_c;
@@ -1471,8 +1491,91 @@ static void BatteryMeasurementTimerCallback
     void *pParam
 )
 {
-    mBasServiceConfig.batteryLevel = SENSORS_GetBatteryLevel();
+    SENSORS_TriggerBatteryMeasurement();
+    mBasServiceConfig.batteryLevel = SENSORS_RefreshBatteryLevel();
     (void)Bas_RecordBatteryMeasurement(&mBasServiceConfig);
+}
+
+static void StatusReportTimerCallback
+(
+    void *pParam
+)
+{
+    (void)pParam;
+    PROTO_SendStatusNow();
+}
+
+static void BleApp_ProtoTxUart(const uint8_t *data, size_t len, void *user)
+{
+    (void)user;
+    if ((data == NULL) || (len == 0U))
+    {
+        return;
+    }
+    (void)BSP_UART_Write(data, (uint32_t)len);
+}
+
+static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user)
+{
+    (void)user;
+
+    if ((data == NULL) || (len == 0U))
+    {
+        return;
+    }
+
+    uint16_t cccdHandle = gGattDbInvalidHandle_d;
+    bool_t isNotifActive = FALSE;
+
+    if (GattDb_FindCccdHandleForCharValueHandle((uint16_t)value_uart_notify, &cccdHandle) != gBleSuccess_c)
+    {
+        (void)BSP_UART_Write(data, (uint32_t)len);
+        return;
+    }
+
+    uint16_t chunkMax = mAppUartBufferSize;
+    if (chunkMax == 0U)
+    {
+        chunkMax = (uint16_t)gAttMaxWriteDataSize_d(gAttMaxMtu_c);
+    }
+
+    size_t pos = 0U;
+    while (pos < len)
+    {
+        bool_t sent = FALSE;
+        size_t chunkLen = len - pos;
+        if (chunkLen > (size_t)chunkMax)
+        {
+            chunkLen = (size_t)chunkMax;
+        }
+
+        if (GattDb_WriteAttribute((uint16_t)value_uart_notify, (uint16_t)chunkLen, (uint8_t *)&data[pos]) != gBleSuccess_c)
+        {
+            (void)BSP_UART_Write(&data[pos], (uint32_t)chunkLen);
+            return;
+        }
+
+        for (uint8_t peerId = 0U; peerId < (uint8_t)gAppMaxConnections_c; peerId++)
+        {
+            if (gInvalidDeviceId_c != maPeerInformation[peerId].deviceId &&
+                mAppRunning_c == maPeerInformation[peerId].appState)
+            {
+                if (gBleSuccess_c == Gap_CheckNotificationStatus(peerId, cccdHandle, &isNotifActive) &&
+                    TRUE == isNotifActive)
+                {
+                    (void)GattServer_SendNotification(peerId, (uint16_t)value_uart_notify);
+                    sent = TRUE;
+                }
+            }
+        }
+
+        if (!sent)
+        {
+            (void)BSP_UART_Write(&data[pos], (uint32_t)chunkLen);
+        }
+
+        pos += chunkLen;
+    }
 }
 
 #if defined(gUseControllerNotifications_c) && (gUseControllerNotifications_c)
@@ -1803,10 +1906,15 @@ static void BluetoothLEHost_Initialized(void)
     mBasServiceConfig.batteryLevel = SENSORS_GetBatteryLevel();
     (void)Bas_Start(&mBasServiceConfig);
 
+    BSP_UART_Init();
+    PROTO_CmdSetTx(BleApp_ProtoTxUart, NULL);
+    PROTO_SetBleConnected(false);
+
     /* Allocate application timer */
     (void)TM_Open(mAppTimerId);
     (void)TM_Open(mUartStreamFlushTimerId);
     (void)TM_Open(mBatteryMeasurementTimerId);
+    (void)TM_Open(mStatusReportTimerId);
 
 #if (gAppButtonCnt_c == 1)
     (void)TM_Open(mSwitchPressTimerId);

@@ -11,11 +11,13 @@
 
 #include "FreeRTOS.h"
 #include "queue.h"
+#include "semphr.h"
 #include "task.h"
 
 #include "app_storage.h"
 #include "bsp_uart.h"
 #include "proto_frame.h"
+#include "sensors.h"
 #include "task_manager.h"
 
 typedef struct
@@ -30,6 +32,9 @@ static proto_parser_t s_parser;
 
 static proto_tx_fn_t s_tx_fn;
 static void *s_tx_user;
+static SemaphoreHandle_t s_tx_mutex;
+static bool s_tx_is_uart;
+static bool s_ble_connected;
 
 static uint8_t s_uart_hex_buf[512];
 static size_t s_uart_hex_len;
@@ -101,7 +106,19 @@ static void proto_send(const uint8_t *data, size_t len)
 {
     if (s_tx_fn != NULL)
     {
+        if ((!s_tx_is_uart) && (!s_ble_connected))
+        {
+            return;
+        }
+        if (s_tx_mutex != NULL)
+        {
+            (void)xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+        }
         s_tx_fn(data, len, s_tx_user);
+        if (s_tx_mutex != NULL)
+        {
+            (void)xSemaphoreGive(s_tx_mutex);
+        }
     }
 }
 
@@ -158,6 +175,11 @@ void PROTO_CmdInit(void)
     }
     PROTO_FrameParserInit(&s_parser);
 
+    if (s_tx_mutex == NULL)
+    {
+        s_tx_mutex = xSemaphoreCreateMutex();
+    }
+
     if (s_tx_fn == NULL)
     {
         BSP_UART_Init();
@@ -169,6 +191,50 @@ void PROTO_CmdSetTx(proto_tx_fn_t fn, void *user)
 {
     s_tx_fn = fn;
     s_tx_user = user;
+    s_tx_is_uart = (fn == proto_tx_uart);
+}
+
+void PROTO_SetBleConnected(bool connected)
+{
+    s_ble_connected = connected;
+}
+
+void PROTO_TxRaw(const uint8_t *data, size_t len)
+{
+    proto_send(data, len);
+}
+
+void PROTO_SendStatusNow(void)
+{
+    const uint64_t task_id = TASK_GetActiveTaskId();
+    const uint32_t bits = (g_system_event_group != NULL) ? (uint32_t)xEventGroupGetBits(g_system_event_group) : 0U;
+    const uint8_t bat = SENSORS_GetBatteryLevel();
+
+    uint8_t buf[1 + 2 + 8 + 4 + 1 + 1 + 2];
+    size_t out_len = 0U;
+    if (PROTO_StatusBuildFrame(task_id, bits, bat, buf, sizeof(buf), &out_len))
+    {
+        proto_send(buf, out_len);
+    }
+}
+
+bool PROTO_SendRealtimeRecord(uint64_t task_id, const void *record, uint16_t record_size, uint32_t seq)
+{
+    if ((record == NULL) || (record_size == 0U))
+    {
+        return false;
+    }
+
+    const uint32_t offset = (uint32_t)(seq * (uint32_t)record_size);
+    uint8_t buf[1 + 2 + 8 + 4 + 4 + 255 + 2];
+    size_t out_len = 0U;
+    if (!PROTO_DataBuildFrame(task_id, offset, 0U, (const uint8_t *)record, record_size, buf, sizeof(buf), &out_len))
+    {
+        return false;
+    }
+
+    proto_send(buf, out_len);
+    return true;
 }
 
 void PROTO_OnRxBytes(const uint8_t *data, size_t len)
