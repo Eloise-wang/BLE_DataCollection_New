@@ -20,6 +20,7 @@
  ************************************************************************************/
 #include "app.h"
 #include "app_conn.h"
+#include "bsp_crc.h"
 #include "fsl_os_abstraction.h"
 
 /************************************************************************************
@@ -71,6 +72,8 @@ int main(void)
     OSA_Init();
 
     BOARD_InitHardware();
+
+    BSP_CRC_Init();
 
     (void)OSA_TaskCreate((osa_task_handle_t)s_startTaskHandle, OSA_TASK(start_task), NULL);
 
