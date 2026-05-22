@@ -88,7 +88,7 @@ static void bsp_can_convert_frame(const flexcan_frame_t *in, bsp_can_frame_t *ou
     out->data[7] = in->dataByte7;
 }
 
-static void bsp_can_rx_cb(CAN_Type *base, flexcan_handle_t *handle, status_t status, uint32_t result, void *userData)
+static FLEXCAN_CALLBACK(bsp_can_rx_cb)
 {
     (void)handle;
     (void)userData;
@@ -98,9 +98,10 @@ static void bsp_can_rx_cb(CAN_Type *base, flexcan_handle_t *handle, status_t sta
         return;
     }
 
+    const uint32_t mb_idx = (uint32_t)result;
     for (uint32_t i = 0U; i < (uint32_t)(sizeof(s_mbMap) / sizeof(s_mbMap[0])); i++)
     {
-        if (result == (uint32_t)s_mbMap[i].mb_idx)
+        if (mb_idx == (uint32_t)s_mbMap[i].mb_idx)
         {
             bsp_can_frame_t frame;
             bsp_can_convert_frame(s_mbMap[i].frame, &frame);

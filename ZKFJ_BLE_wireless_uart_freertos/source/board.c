@@ -17,6 +17,8 @@
 #include "app.h"
 #include "fsl_port.h"
 #include "fsl_lpuart.h"
+#include "fsl_lpspi.h"
+#include "fsl_lpspi_mem_adapter.h"
 
 #include "fsl_debug_console.h"
 #if !(defined BOARD_DEBUG_UART_INSTANCE) || (BOARD_DEBUG_UART_INSTANCE > 1)
@@ -269,6 +271,34 @@ void BOARD_UninitApp2Console(void)
     }
     BOARD_UninitPinsApp2Console();
     CLOCK_DisableClock(BOARD_APP2_UART_CLK);
+}
+
+uint32_t BOARD_GetLpspiClock(void)
+{
+    return CLOCK_GetIpFreq(kCLOCK_Lpspi1);
+}
+
+uint32_t BOARD_GetNorFlashBaudrate(void)
+{
+    return 8000000U;
+}
+
+LPSPI_Type *BOARD_GetLpspiForNorFlash(void)
+{
+    return LPSPI1;
+}
+
+void BOARD_LpspiPcsPinControl(bool isSelected)
+{
+    GPIO_PinWrite(BOARD_EXTFLASH_CS_GPIO, BOARD_EXTFLASH_CS_PIN, isSelected ? 0U : 1U);
+}
+
+void BOARD_LpspiIomuxConfig(spi_pin_mode_t pinMode)
+{
+    if (pinMode == kSpiIomux_SpiMode)
+    {
+        BOARD_InitExtFlashPins();
+    }
 }
 
 /*******************************************************************************

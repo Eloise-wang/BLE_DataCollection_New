@@ -68,6 +68,12 @@ BOARD_InitPinButton0:
     pull_select: down}
   - {pin_num: '14', peripheral: GPIOA, signal: 'GPIO, 19', pin_signal: CMP1_IN0/PTA19/WUU0_P4/LPSPI0_SCK/LPUART0_RTS_b/LPI2C0_SCL/TPM0_CH2/RF_GPO_1, identifier: Collection_LED}
   - {pin_num: '25', peripheral: GPIOD, signal: 'GPIO, 2', pin_signal: ADC0_A6/PTD2/LPTMR0_ALT3/TAMPER0/RF_GPO_5}
+  - {pin_num: '37', peripheral: LPSPI1, signal: PCS2, pin_signal: PTC0/WUU0_P7/LPSPI1_PCS2/CAN0_TX/I3C0_SDA/TPM1_CH0/LPI2C1_SCL/FLEXIO0_D16}
+  - {pin_num: '38', peripheral: LPSPI1, signal: PCS3, pin_signal: PTC1/WUU0_P8/LPSPI1_PCS3/CAN0_RX/I3C0_SCL/TPM1_CH1/LPI2C1_SDA/FLEXIO0_D17}
+  - {pin_num: '46', peripheral: LPSPI1, signal: PCS0, pin_signal: ADC0_B10/PTB0/WUU0_P13/LPSPI1_PCS0/TPM1_CH0/FLEXIO0_D26}
+  - {pin_num: '47', peripheral: LPSPI1, signal: IN, pin_signal: ADC0_B11/PTB1/LPSPI1_SIN/TPM1_CH1/FLEXIO0_D27}
+  - {pin_num: '48', peripheral: LPSPI1, signal: SCK, pin_signal: ADC0_B12/PTB2/LPSPI1_SCK/LPUART1_TX/TPM1_CH2/FLEXIO0_D28}
+  - {pin_num: '1', peripheral: LPSPI1, signal: OUT, pin_signal: ADC0_B13/PTB3/WUU0_P14/LPSPI1_SOUT/LPUART1_RX/TPM1_CH3/FLEXIO0_D29}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
 /* clang-format on */
@@ -82,6 +88,8 @@ void BOARD_InitPinButton0(void)
 {
     /* Clock Configuration: Peripheral clocks are enabled; module does not stall low power mode entry */
     CLOCK_EnableClock(kCLOCK_PortA);
+    /* Clock Configuration: Peripheral clocks are enabled; module does not stall low power mode entry */
+    CLOCK_EnableClock(kCLOCK_PortB);
     /* Clock Configuration: Peripheral clocks are enabled; module does not stall low power mode entry */
     CLOCK_EnableClock(kCLOCK_PortC);
 
@@ -103,6 +111,24 @@ void BOARD_InitPinButton0(void)
 
     /* PORTA21 (pin 18) is configured as ADC0_A15 */
     PORT_SetPinMux(BOARD_INITPINBUTTON0_pressure_Detection_PORT, BOARD_INITPINBUTTON0_pressure_Detection_PIN, kPORT_PinDisabledOrAnalog);
+
+    /* PORTB0 (pin 46) is configured as LPSPI1_PCS0 */
+    PORT_SetPinMux(PORTB, 0U, kPORT_MuxAlt2);
+
+    /* PORTB1 (pin 47) is configured as LPSPI1_SIN */
+    PORT_SetPinMux(BOARD_INITPINBUTTON0_SI_IO1_PORT, BOARD_INITPINBUTTON0_SI_IO1_PIN, kPORT_MuxAlt2);
+
+    /* PORTB2 (pin 48) is configured as LPSPI1_SCK */
+    PORT_SetPinMux(BOARD_INITPINBUTTON0_SCKSI_IO1_PORT, BOARD_INITPINBUTTON0_SCKSI_IO1_PIN, kPORT_MuxAlt2);
+
+    /* PORTB3 (pin 1) is configured as LPSPI1_SOUT */
+    PORT_SetPinMux(BOARD_INITPINBUTTON0_SO_IO1_PORT, BOARD_INITPINBUTTON0_SO_IO1_PIN, kPORT_MuxAlt2);
+
+    /* PORTC0 (pin 37) is configured as LPSPI1_PCS2 */
+    PORT_SetPinMux(PORTC, 0U, kPORT_MuxAlt2);
+
+    /* PORTC1 (pin 38) is configured as LPSPI1_PCS3 */
+    PORT_SetPinMux(PORTC, 1U, kPORT_MuxAlt2);
 
     /* PORTC2 (pin 39) is configured as LPUART1_RX */
     PORT_SetPinMux(PORTC, 2U, kPORT_MuxAlt3);

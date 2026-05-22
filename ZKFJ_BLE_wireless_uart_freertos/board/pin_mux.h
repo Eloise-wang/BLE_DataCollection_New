@@ -107,6 +107,33 @@ void BOARD_InitBootPins(void);
 #define BOARD_INITPINBUTTON0_BLE_LED_PIN_MASK (1U << 2U)      /*!<@brief PORT pin mask */
                                                               /* @} */
 
+/*! @name PORTB1 (number 47), SI_IO1/SI-IO1/SI-IO1
+  @{ */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINBUTTON0_SI_IO1_PORT PORTB               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINBUTTON0_SI_IO1_PIN 1U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINBUTTON0_SI_IO1_PIN_MASK (1U << 1U)      /*!<@brief PORT pin mask */
+                                                             /* @} */
+
+/*! @name PORTB2 (number 48), SCK
+  @{ */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINBUTTON0_SCKSI_IO1_PORT PORTB               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINBUTTON0_SCKSI_IO1_PIN 2U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINBUTTON0_SCKSI_IO1_PIN_MASK (1U << 2U)      /*!<@brief PORT pin mask */
+                                                                /* @} */
+
+/*! @name PORTB3 (number 1), SO_IO1/SO-IO1/SO-IO1
+  @{ */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINBUTTON0_SO_IO1_PORT PORTB               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINBUTTON0_SO_IO1_PIN 3U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINBUTTON0_SO_IO1_PIN_MASK (1U << 3U)      /*!<@brief PORT pin mask */
+                                                             /* @} */
+
 /*!
  * @brief Configures pin routing and optionally pin electrical features.
  *

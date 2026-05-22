@@ -65,6 +65,11 @@
                         <data>true</data>
                      </feature>
                   </dependency>
+                  <dependency resourceType="Peripheral" resourceId="LPSPI1" description="Peripheral LPSPI1 signals are routed in the Pins Tool, but the peripheral is not initialized in the Peripherals Tool." problem_level="1" source="Pins:BOARD_InitPinButton0">
+                     <feature name="initialized" evaluation="equal">
+                        <data>true</data>
+                     </feature>
+                  </dependency>
                   <dependency resourceType="SWComponent" resourceId="platform.drivers.common" description="Pins initialization requires the COMMON Driver in the project." problem_level="2" source="Pins:BOARD_InitPinButton0">
                      <feature name="enabled" evaluation="equal" configuration="cm33">
                         <data>true</data>
@@ -117,6 +122,12 @@
                      </pin_features>
                   </pin>
                   <pin peripheral="GPIOD" signal="GPIO, 2" pin_num="25" pin_signal="ADC0_A6/PTD2/LPTMR0_ALT3/TAMPER0/RF_GPO_5"/>
+                  <pin peripheral="LPSPI1" signal="PCS2" pin_num="37" pin_signal="PTC0/WUU0_P7/LPSPI1_PCS2/CAN0_TX/I3C0_SDA/TPM1_CH0/LPI2C1_SCL/FLEXIO0_D16"/>
+                  <pin peripheral="LPSPI1" signal="PCS3" pin_num="38" pin_signal="PTC1/WUU0_P8/LPSPI1_PCS3/CAN0_RX/I3C0_SCL/TPM1_CH1/LPI2C1_SDA/FLEXIO0_D17"/>
+                  <pin peripheral="LPSPI1" signal="PCS0" pin_num="46" pin_signal="ADC0_B10/PTB0/WUU0_P13/LPSPI1_PCS0/TPM1_CH0/FLEXIO0_D26"/>
+                  <pin peripheral="LPSPI1" signal="IN" pin_num="47" pin_signal="ADC0_B11/PTB1/LPSPI1_SIN/TPM1_CH1/FLEXIO0_D27"/>
+                  <pin peripheral="LPSPI1" signal="SCK" pin_num="48" pin_signal="ADC0_B12/PTB2/LPSPI1_SCK/LPUART1_TX/TPM1_CH2/FLEXIO0_D28"/>
+                  <pin peripheral="LPSPI1" signal="OUT" pin_num="1" pin_signal="ADC0_B13/PTB3/WUU0_P14/LPSPI1_SOUT/LPUART1_RX/TPM1_CH3/FLEXIO0_D29"/>
                </pins>
             </function>
             <function name="BOARD_InitPinButton1">
