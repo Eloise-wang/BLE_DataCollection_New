@@ -31,12 +31,15 @@ void BSP_UART_Init(void);
 // 打印UART数据
 void BSP_UART_Print(const char *fmt, ...);
 
+// 尝试读取UART接收缓冲区数据（非阻塞）
+bool BSP_UART_TryRead(uint8_t *out, uint32_t out_size, uint32_t *out_read);
+
 #else
 
 #define BSP_UART_Init()
 #define BSP_UART_Print(...)
+#define BSP_UART_TryRead(...) false
 
 #endif
 
 #endif /* BSP_BSP_UART_H_ */
-

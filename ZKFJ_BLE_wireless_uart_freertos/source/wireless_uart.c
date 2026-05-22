@@ -1729,10 +1729,12 @@ static void BleApp_SerialInit(void)
     assert(kStatus_SerialManager_Success == status);
     (void)status;
 
+#if 0
     status = SerialManager_OpenReadHandle((serial_handle_t)appSerMgrIf, (serial_read_handle_t)s_readHandle);
     assert(kStatus_SerialManager_Success == status);
     status = SerialManager_InstallRxCallback((serial_read_handle_t)s_readHandle, Uart_RxCallBack, NULL);
     assert(kStatus_SerialManager_Success == status);
+#endif
 }
 
 /*! *********************************************************************************

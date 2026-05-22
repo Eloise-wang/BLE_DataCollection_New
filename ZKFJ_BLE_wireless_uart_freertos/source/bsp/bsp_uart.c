@@ -20,11 +20,14 @@
 static bool s_inited = false;
 
 static SERIAL_MANAGER_WRITE_HANDLE_DEFINE(s_writeHandle);
+static SERIAL_MANAGER_READ_HANDLE_DEFINE(s_readHandle);
 
 static volatile bool s_txBusy = false;
 static bsp_ringBuff_t s_txRb;
 static uint8_t s_txStorage[BSP_UART_TX_RING_SIZE];
 static uint8_t s_txChunk[64];
+
+static bool s_rxInited = false;
 
 //进入临界区
 static uint32_t bsp_uart_enter_critical(void)
@@ -108,8 +111,10 @@ void BSP_UART_Init(void)
         return;
     }
 
+    serial_handle_t appSerMgrIf = (serial_handle_t)&gSerMgrIf[0];
+
     serial_manager_status_t status =
-        SerialManager_OpenWriteHandle((serial_handle_t)gSerMgrIf, (serial_write_handle_t)s_writeHandle);
+        SerialManager_OpenWriteHandle((serial_handle_t)appSerMgrIf, (serial_write_handle_t)s_writeHandle);
     if (status != kStatus_SerialManager_Success)
     {
         return;
@@ -120,6 +125,12 @@ void BSP_UART_Init(void)
     {
         (void)SerialManager_CloseWriteHandle((serial_write_handle_t)s_writeHandle);
         return;
+    }
+
+    status = SerialManager_OpenReadHandle((serial_handle_t)appSerMgrIf, (serial_read_handle_t)s_readHandle);
+    if (status == kStatus_SerialManager_Success)
+    {
+        s_rxInited = true;
     }
 
     uint32_t primask = bsp_uart_enter_critical();
@@ -180,6 +191,23 @@ void BSP_UART_Print(const char *fmt, ...)
     }
 
     (void)bsp_uart_write((const uint8_t *)buf, len);
+}
+
+bool BSP_UART_TryRead(uint8_t *out, uint32_t out_size, uint32_t *out_read)
+{
+    if ((out == NULL) || (out_read == NULL) || (out_size == 0U))
+    {
+        return false;
+    }
+
+    *out_read = 0U;
+
+    if (!s_inited || !s_rxInited)
+    {
+        return false;
+    }
+
+    return SerialManager_TryRead((serial_read_handle_t)s_readHandle, out, out_size, out_read) == kStatus_SerialManager_Success;
 }
 
 #endif
