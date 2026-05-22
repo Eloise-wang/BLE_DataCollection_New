@@ -22,6 +22,7 @@
 #include "app_conn.h"
 #include "bsp_crc.h"
 #include "fsl_os_abstraction.h"
+#include "task_manager.h"
 
 /************************************************************************************
  *************************************************************************************
@@ -48,6 +49,9 @@ static void start_task(void *argument)
 {
     /* Start Application services (timers, serial manager, low power, led, button, etc..) */
     APP_InitServices();
+
+    TASK_InitPipelineResources();
+    TASK_CreateAllTasks();
 
     /* Start BLE Platform related ressources such as clocks, Link layer and HCI transport to Link Layer */
     (void)APP_InitBle();
