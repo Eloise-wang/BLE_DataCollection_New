@@ -33,9 +33,9 @@ void TASK_CreateAllTasks(void);
 
 
 // 获取当前活动任务ID
-uint32_t TASK_GetActiveTaskId(void);
+uint64_t TASK_GetActiveTaskId(void);
 // 设置当前活动任务ID
-void TASK_SetActiveTaskId(uint32_t task_id);
+void TASK_SetActiveTaskId(uint64_t task_id);
 
 
 // 获取采集任务是否启用

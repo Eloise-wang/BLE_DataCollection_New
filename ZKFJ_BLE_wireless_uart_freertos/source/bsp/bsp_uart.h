@@ -28,6 +28,8 @@
 // 初始化UART
 void BSP_UART_Init(void);
 
+bool BSP_UART_Write(const uint8_t *data, uint32_t length);
+
 // 打印UART数据
 void BSP_UART_Print(const char *fmt, ...);
 
@@ -37,6 +39,7 @@ bool BSP_UART_TryRead(uint8_t *out, uint32_t out_size, uint32_t *out_read);
 #else
 
 #define BSP_UART_Init()
+#define BSP_UART_Write(...) false
 #define BSP_UART_Print(...)
 #define BSP_UART_TryRead(...) false
 

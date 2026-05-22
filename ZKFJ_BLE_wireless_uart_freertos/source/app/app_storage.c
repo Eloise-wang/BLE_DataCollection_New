@@ -17,12 +17,12 @@
 #define APP_STORAGE_PATH_MAX  64
 #define APP_STORAGE_LOG_BUF_MAX 256
 
-static void app_storage_task_dir(char out[APP_STORAGE_DIR_MAX], uint32_t task_id)
+static void app_storage_task_dir(char out[APP_STORAGE_DIR_MAX], uint64_t task_id)
 {
-    (void)snprintf(out, APP_STORAGE_DIR_MAX, "task_%lu", (unsigned long)task_id);
+    (void)snprintf(out, APP_STORAGE_DIR_MAX, "task_%016llX", (unsigned long long)task_id);
 }
 
-static void app_storage_task_path(char out[APP_STORAGE_PATH_MAX], uint32_t task_id, const char *file)
+static void app_storage_task_path(char out[APP_STORAGE_PATH_MAX], uint64_t task_id, const char *file)
 {
     char dir[APP_STORAGE_DIR_MAX];
     app_storage_task_dir(dir, task_id);
@@ -34,7 +34,7 @@ bool APP_Storage_Init(void)
     return BSP_FS_Init();
 }
 
-bool APP_Storage_BeginTask(uint32_t task_id, const app_storage_task_meta_t *meta)
+bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta)
 {
     char dir[APP_STORAGE_DIR_MAX];
     char metaPath[APP_STORAGE_PATH_MAX];
@@ -62,7 +62,7 @@ bool APP_Storage_BeginTask(uint32_t task_id, const app_storage_task_meta_t *meta
     return true;
 }
 
-bool APP_Storage_AppendData(uint32_t task_id, const void *record, uint32_t record_size)
+bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t record_size)
 {
     char dataPath[APP_STORAGE_PATH_MAX];
 
@@ -75,7 +75,7 @@ bool APP_Storage_AppendData(uint32_t task_id, const void *record, uint32_t recor
     return (BSP_FS_FileAppend(dataPath, record, record_size) == 0);
 }
 
-bool APP_Storage_AppendLog(uint32_t task_id, const void *data, uint32_t size)
+bool APP_Storage_AppendLog(uint64_t task_id, const void *data, uint32_t size)
 {
     char logPath[APP_STORAGE_PATH_MAX];
 
@@ -88,7 +88,7 @@ bool APP_Storage_AppendLog(uint32_t task_id, const void *data, uint32_t size)
     return (BSP_FS_FileAppend(logPath, data, size) == 0);
 }
 
-bool APP_Storage_LogPrintf(uint32_t task_id, const char *format, ...)
+bool APP_Storage_LogPrintf(uint64_t task_id, const char *format, ...)
 {
     char buf[APP_STORAGE_LOG_BUF_MAX];
     va_list args;
@@ -122,7 +122,7 @@ bool APP_Storage_LogPrintf(uint32_t task_id, const char *format, ...)
     return APP_Storage_AppendLog(task_id, buf, size);
 }
 
-int APP_Storage_ReadLog(uint32_t task_id, uint32_t offset, void *out, uint32_t size)
+int APP_Storage_ReadLog(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
 {
     char logPath[APP_STORAGE_PATH_MAX];
 
@@ -135,7 +135,7 @@ int APP_Storage_ReadLog(uint32_t task_id, uint32_t offset, void *out, uint32_t s
     return BSP_FS_FileReadAt(logPath, offset, out, size);
 }
 
-bool APP_Storage_GetLogSize(uint32_t task_id, uint32_t *out_size)
+bool APP_Storage_GetLogSize(uint64_t task_id, uint32_t *out_size)
 {
     char logPath[APP_STORAGE_PATH_MAX];
 
@@ -148,7 +148,7 @@ bool APP_Storage_GetLogSize(uint32_t task_id, uint32_t *out_size)
     return (BSP_FS_FileSize(logPath, out_size) == 0);
 }
 
-int APP_Storage_ReadData(uint32_t task_id, uint32_t offset, void *out, uint32_t size)
+int APP_Storage_ReadData(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
 {
     char dataPath[APP_STORAGE_PATH_MAX];
 
@@ -161,7 +161,7 @@ int APP_Storage_ReadData(uint32_t task_id, uint32_t offset, void *out, uint32_t 
     return BSP_FS_FileReadAt(dataPath, offset, out, size);
 }
 
-bool APP_Storage_GetDataSize(uint32_t task_id, uint32_t *out_size)
+bool APP_Storage_GetDataSize(uint64_t task_id, uint32_t *out_size)
 {
     char dataPath[APP_STORAGE_PATH_MAX];
 
@@ -174,7 +174,7 @@ bool APP_Storage_GetDataSize(uint32_t task_id, uint32_t *out_size)
     return (BSP_FS_FileSize(dataPath, out_size) == 0);
 }
 
-bool APP_Storage_DeleteTask(uint32_t task_id)
+bool APP_Storage_DeleteTask(uint64_t task_id)
 {
     char dir[APP_STORAGE_DIR_MAX];
     char p[APP_STORAGE_PATH_MAX];

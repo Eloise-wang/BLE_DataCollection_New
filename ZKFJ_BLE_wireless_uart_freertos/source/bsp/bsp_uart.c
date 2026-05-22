@@ -29,6 +29,13 @@ static uint8_t s_txChunk[64];
 
 static bool s_rxInited = false;
 
+static void bsp_uart_rx_cb(void *callbackParam, serial_manager_callback_message_t *message, serial_manager_status_t status)
+{
+    (void)callbackParam;
+    (void)message;
+    (void)status;
+}
+
 //进入临界区
 static uint32_t bsp_uart_enter_critical(void)
 {
@@ -130,6 +137,7 @@ void BSP_UART_Init(void)
     status = SerialManager_OpenReadHandle((serial_handle_t)appSerMgrIf, (serial_read_handle_t)s_readHandle);
     if (status == kStatus_SerialManager_Success)
     {
+        (void)SerialManager_InstallRxCallback((serial_read_handle_t)s_readHandle, bsp_uart_rx_cb, NULL);
         s_rxInited = true;
     }
 
@@ -141,7 +149,7 @@ void BSP_UART_Init(void)
     s_inited = true;
 }
 
-static bool bsp_uart_write(const uint8_t *data, uint32_t length)
+bool BSP_UART_Write(const uint8_t *data, uint32_t length)
 {
     if (!s_inited || (data == NULL) || (length == 0U))
     {
@@ -190,7 +198,7 @@ void BSP_UART_Print(const char *fmt, ...)
         len = (uint32_t)(sizeof(buf) - 1U);
     }
 
-    (void)bsp_uart_write((const uint8_t *)buf, len);
+    (void)BSP_UART_Write((const uint8_t *)buf, len);
 }
 
 bool BSP_UART_TryRead(uint8_t *out, uint32_t out_size, uint32_t *out_read)

@@ -55,6 +55,7 @@
 #include "board.h"
 #include "board_comp.h"
 #include "wireless_uart.h"
+#include "proto_cmd_handler.h"
 
 #if defined(K32W232H_SERIES) || defined(KW45B41Z82_SERIES) || defined(KW45B41Z83_SERIES) || defined(K32W1480_SERIES) || \
     defined(KW47B42ZB7_cm33_core0_SERIES) || defined(KW47B42ZB6_cm33_core0_SERIES) || defined(KW47B42ZB3_cm33_core0_SERIES) || \
@@ -948,8 +949,8 @@ static void BleApp_GattServerCallback
         {
             if (pServerEvent->eventData.attributeWrittenEvent.handle == (uint16_t)value_uart_stream)
             {
-                BleApp_ReceivedUartStream(deviceId, pServerEvent->eventData.attributeWrittenEvent.aValue,
-                                          pServerEvent->eventData.attributeWrittenEvent.cValueLength);
+                PROTO_OnRxBytes(pServerEvent->eventData.attributeWrittenEvent.aValue,
+                                pServerEvent->eventData.attributeWrittenEvent.cValueLength);
             }
 
             break;

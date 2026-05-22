@@ -7,9 +7,9 @@
 #include "task.h"
 
 static bool s_storage_ready;
-static uint32_t s_storage_task_id;
+static uint64_t s_storage_task_id;
 
-static void task_storage_begin_if_needed(uint32_t task_id)
+static void task_storage_begin_if_needed(uint64_t task_id)
 {
     if (s_storage_ready)
     {
@@ -52,7 +52,7 @@ void TASK_StorageTask(void *pvParameters)
             continue;
         }
 
-        const uint32_t active_task_id = TASK_GetActiveTaskId();
+        const uint64_t active_task_id = TASK_GetActiveTaskId();
         if (!s_storage_ready)
         {
             s_storage_task_id = active_task_id;

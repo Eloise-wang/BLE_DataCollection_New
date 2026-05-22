@@ -3,12 +3,13 @@
 #include <assert.h>
 
 #include "app_global.h"
+#include "proto_cmd_handler.h"
 #include "task.h"
 
 QueueHandle_t g_sensor_data_queue;
 EventGroupHandle_t g_system_event_group;
 
-static uint32_t s_active_task_id = 1U;
+static uint64_t s_active_task_id = 1U;
 
 extern void TASK_SensorCollectTask(void *pvParameters);
 extern void TASK_StorageTask(void *pvParameters);
@@ -38,17 +39,19 @@ void TASK_InitPipelineResources(void)
 void TASK_CreateAllTasks(void)
 {
     (void)xTaskCreate(TASK_WatchdogTask, "Task_Wdog", 256U, NULL, 5U, NULL);
+    (void)xTaskCreate(PROTO_CmdTask, "Task_Proto", 512U, NULL, 4U, NULL);
+    (void)xTaskCreate(PROTO_UartRxTask, "Task_UartCmd", 384U, NULL, 4U, NULL);
     (void)xTaskCreate(TASK_SensorCollectTask, "Task_Sensor", 384U, NULL, 3U, NULL);
     (void)xTaskCreate(TASK_StorageTask, "Task_Storage", 1024U, NULL, 2U, NULL);
     (void)xTaskCreate(TASK_LedTask, "Task_Led", 256U, NULL, 1U, NULL);
 }
 
-uint32_t TASK_GetActiveTaskId(void)
+uint64_t TASK_GetActiveTaskId(void)
 {
     return s_active_task_id;
 }
 
-void TASK_SetActiveTaskId(uint32_t task_id)
+void TASK_SetActiveTaskId(uint64_t task_id)
 {
     if (task_id == 0U)
     {
