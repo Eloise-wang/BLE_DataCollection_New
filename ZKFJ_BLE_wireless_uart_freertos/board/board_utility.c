@@ -228,10 +228,7 @@ float BOARD_GetTemperature(void)
 int8_t BOARD_GetBatteryLevel(void)
 {
     uint16_t adcValSample    = 0U;
-    uint16_t adcValBattFull  = 0U;
-    uint16_t adcValBattEmpty = 0U;
     int8_t batLvl            = 0U;
-    float vrefoVoltage       = 0U;
     lpadc_conv_result_t mLpadcResultConfigStruct;
     do
     {
@@ -247,24 +244,25 @@ int8_t BOARD_GetBatteryLevel(void)
 
         adcValSample = (mLpadcResultConfigStruct.convValue) >> g_LpadcResultShift;
 
-        /* Get the voltage of VREF_OUT */
-        vrefoVoltage = 1.0 + VREF_GetTrim21Val(VREF0) * 0.1;
-
-        /* Calculate the ADC value of the battery full voltage */
-        adcValBattFull = (uint16_t)(g_LpadcFullRange / vrefoVoltage * LPADC_BATTERY_FULL_VOLTAGE / 4U);
-        /* Calculate the ADC value of the battery empty voltage */
-        adcValBattEmpty = (uint16_t)(g_LpadcFullRange / vrefoVoltage * LPADC_BATTERY_EMPTY_VOLTAGE / 4U);
-
         triggerState = BOARD_AdcTriggerNone;
 
-        if (adcValSample < adcValBattEmpty)
-        {
-            /* Return 0 if the adc sample value is lower than the adc value of the empty battery voltage */
-            break;
-        }
+        const float ratio = (LPADC_BATTERY_DIVIDER_RATIO <= 0.0f) ? 0.3f : LPADC_BATTERY_DIVIDER_RATIO;
+        const float adcVoltage = ((float)adcValSample * LPADC_BATTERY_REF_VOLTAGE) / (float)g_LpadcFullRange;
+        const float batteryVoltage = adcVoltage / ratio;
 
-        /* Calculate the battery level percent */
-        batLvl = 100U * (adcValSample - adcValBattEmpty) / (adcValBattFull - adcValBattEmpty);
+        if (batteryVoltage <= LPADC_BATTERY_EMPTY_VOLTAGE)
+        {
+            batLvl = 0;
+        }
+        else if (batteryVoltage >= LPADC_BATTERY_FULL_VOLTAGE)
+        {
+            batLvl = 100;
+        }
+        else
+        {
+            batLvl = (int8_t)(100.0f * (batteryVoltage - LPADC_BATTERY_EMPTY_VOLTAGE) /
+                              (LPADC_BATTERY_FULL_VOLTAGE - LPADC_BATTERY_EMPTY_VOLTAGE));
+        }
 
     } while (false);
 

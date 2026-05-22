@@ -20,7 +20,7 @@
  * best option. */
 #define LPADC_REFERENCE_TEMPERATURE kLPADC_ReferenceVoltageAlt2
 /*! @brief ADC reference, for battery voltage monitoring. */
-#define LPADC_REFERENCE_BATTERY kLPADC_ReferenceVoltageAlt2
+#define LPADC_REFERENCE_BATTERY kLPADC_ReferenceVoltageAlt1
 /*! @brief The slope factor for temperature sensor calculation. */
 #define LPADC_TEMP_PARAMETER_A FSL_FEATURE_LPADC_TEMP_PARAMETER_A
 /*! @brief The offset factorfor temperature sensor calculation. */
@@ -28,11 +28,19 @@
 /*! @brief The bandgap coefficent temperature sensor calculation. */
 #define LPADC_TEMP_PARAMETER_ALPHA FSL_FEATURE_LPADC_TEMP_PARAMETER_ALPHA
 /*! @brief ADC channel of the battery monitor. */
-#define LPADC_BATTERY_MONITOR_CHANNEL 29U
+#define LPADC_BATTERY_MONITOR_CHANNEL 5U
 /*! @brief The voltage of the full battery. */
-#define LPADC_BATTERY_FULL_VOLTAGE 3.0f
+#define LPADC_BATTERY_FULL_VOLTAGE 8.4f
 /*! @brief The voltage of the empty battery. */
-#define LPADC_BATTERY_EMPTY_VOLTAGE 1.8f
+#define LPADC_BATTERY_EMPTY_VOLTAGE 6.0f
+
+#ifndef LPADC_BATTERY_REF_VOLTAGE
+#define LPADC_BATTERY_REF_VOLTAGE 3.3f
+#endif
+
+#ifndef LPADC_BATTERY_DIVIDER_RATIO
+#define LPADC_BATTERY_DIVIDER_RATIO 0.3f
+#endif
 
 /*!
  * \brief  type definition for the adc trigger state
