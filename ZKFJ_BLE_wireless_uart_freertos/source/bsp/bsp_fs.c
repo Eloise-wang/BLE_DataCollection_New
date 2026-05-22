@@ -43,6 +43,24 @@ static lpspi_memory_config_t s_memCfg = {
     .bytesInMemorySize = (8U * 1024U * 1024U),
 };
 
+static uint32_t bsp_fs_get_fs_size(void)
+{
+    if (s_memCfg.bytesInSectorSize == 0U)
+    {
+        return 0U;
+    }
+    if (s_memCfg.bytesInMemorySize < s_memCfg.bytesInSectorSize)
+    {
+        return 0U;
+    }
+    return s_memCfg.bytesInMemorySize - s_memCfg.bytesInSectorSize;
+}
+
+static uint32_t bsp_fs_get_crashlog_base(void)
+{
+    return bsp_fs_get_fs_size();
+}
+
 static int bsp_fs_lock(uint32_t timeout_ms)
 {
     if (!s_mutexCreated)
@@ -143,7 +161,7 @@ bool BSP_FS_Init(void)
     s_lfsCfg.read_size      = 16U;
     s_lfsCfg.prog_size      = s_memCfg.bytesInPageSize;
     s_lfsCfg.block_size     = s_memCfg.bytesInSectorSize;
-    s_lfsCfg.block_count    = s_memCfg.bytesInMemorySize / s_memCfg.bytesInSectorSize;
+    s_lfsCfg.block_count    = bsp_fs_get_fs_size() / s_memCfg.bytesInSectorSize;
     s_lfsCfg.cache_size     = s_memCfg.bytesInPageSize;
     s_lfsCfg.lookahead_size = (uint32_t)sizeof(s_lookahead);
     s_lfsCfg.block_cycles   = 500U;
@@ -361,4 +379,85 @@ int BSP_FS_FileSize(const char *path, uint32_t *out_size)
 
     bsp_fs_unlock();
     return err;
+}
+
+bool BSP_FS_CrashLog_Erase(void)
+{
+    if (!s_initialized)
+    {
+        (void)BSP_FS_Init();
+    }
+    if (!s_initialized)
+    {
+        return false;
+    }
+
+    const uint32_t addr = bsp_fs_get_crashlog_base();
+    return (Nor_Flash_Erase_Sector(&s_norHandle, addr) == kStatus_Success);
+}
+
+bool BSP_FS_CrashLog_Write(const void *data, uint32_t size)
+{
+    if ((data == NULL) || (size == 0U))
+    {
+        return false;
+    }
+
+    if (!s_initialized)
+    {
+        (void)BSP_FS_Init();
+    }
+    if (!s_initialized)
+    {
+        return false;
+    }
+
+    const uint32_t maxSize = s_memCfg.bytesInSectorSize;
+    if (size > maxSize)
+    {
+        size = maxSize;
+    }
+
+    const uint32_t addr = bsp_fs_get_crashlog_base();
+    if (Nor_Flash_Erase_Sector(&s_norHandle, addr) != kStatus_Success)
+    {
+        return false;
+    }
+
+    return (Nor_Flash_Program(&s_norHandle, addr, (uint8_t *)(uintptr_t)data, size) == kStatus_Success);
+}
+
+int BSP_FS_CrashLog_Read(uint32_t offset, void *out, uint32_t size)
+{
+    if ((out == NULL) || (size == 0U))
+    {
+        return -1;
+    }
+
+    if (!s_initialized)
+    {
+        (void)BSP_FS_Init();
+    }
+    if (!s_initialized)
+    {
+        return -1;
+    }
+
+    if (offset >= s_memCfg.bytesInSectorSize)
+    {
+        return 0;
+    }
+
+    uint32_t remaining = s_memCfg.bytesInSectorSize - offset;
+    if (size > remaining)
+    {
+        size = remaining;
+    }
+
+    const uint32_t addr = bsp_fs_get_crashlog_base() + offset;
+    if (Nor_Flash_Read(&s_norHandle, addr, (uint8_t *)out, size) != kStatus_Success)
+    {
+        return -1;
+    }
+    return (int)size;
 }

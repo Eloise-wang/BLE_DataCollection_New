@@ -34,13 +34,17 @@ int BSP_FS_FileWriteTruncate(const char *path, const void *data, uint32_t size);
 // 从文件偏移量读取数据
 int BSP_FS_FileReadAt(const char *path, uint32_t offset, void *out, uint32_t size);
 // 获取文件大小
-int BSP_FS_FileReadAt(const char *path, uint32_t offset, void *out, uint32_t size);
-// 获取文件大小
 int BSP_FS_FileSize(const char *path, uint32_t *out_size);
+
+// 擦除崩溃日志文件
+bool BSP_FS_CrashLog_Erase(void);
+// 写入崩溃日志文件
+bool BSP_FS_CrashLog_Write(const void *data, uint32_t size);
+// 从崩溃日志文件偏移量读取数据
+int BSP_FS_CrashLog_Read(uint32_t offset, void *out, uint32_t size);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* BSP_BSP_FS_H_ */
-

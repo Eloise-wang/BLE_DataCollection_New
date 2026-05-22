@@ -122,6 +122,32 @@ bool APP_Storage_LogPrintf(uint32_t task_id, const char *format, ...)
     return APP_Storage_AppendLog(task_id, buf, size);
 }
 
+int APP_Storage_ReadLog(uint32_t task_id, uint32_t offset, void *out, uint32_t size)
+{
+    char logPath[APP_STORAGE_PATH_MAX];
+
+    if ((out == NULL) || (size == 0U) || (!BSP_FS_IsMounted()))
+    {
+        return -1;
+    }
+
+    app_storage_task_path(logPath, task_id, "sys.log");
+    return BSP_FS_FileReadAt(logPath, offset, out, size);
+}
+
+bool APP_Storage_GetLogSize(uint32_t task_id, uint32_t *out_size)
+{
+    char logPath[APP_STORAGE_PATH_MAX];
+
+    if ((out_size == NULL) || (!BSP_FS_IsMounted()))
+    {
+        return false;
+    }
+
+    app_storage_task_path(logPath, task_id, "sys.log");
+    return (BSP_FS_FileSize(logPath, out_size) == 0);
+}
+
 int APP_Storage_ReadData(uint32_t task_id, uint32_t offset, void *out, uint32_t size)
 {
     char dataPath[APP_STORAGE_PATH_MAX];

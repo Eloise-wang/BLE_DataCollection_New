@@ -45,6 +45,11 @@ bool APP_Storage_AppendData(uint32_t task_id, const void *record, uint32_t recor
 bool APP_Storage_AppendLog(uint32_t task_id, const void *data, uint32_t size);
 bool APP_Storage_LogPrintf(uint32_t task_id, const char *format, ...);
 
+// 从日志文件偏移量读取数据
+int APP_Storage_ReadLog(uint32_t task_id, uint32_t offset, void *out, uint32_t size);
+// 获取日志大小
+bool APP_Storage_GetLogSize(uint32_t task_id, uint32_t *out_size);
+
 // 从文件偏移量读取数据
 int APP_Storage_ReadData(uint32_t task_id, uint32_t offset, void *out, uint32_t size);
 
