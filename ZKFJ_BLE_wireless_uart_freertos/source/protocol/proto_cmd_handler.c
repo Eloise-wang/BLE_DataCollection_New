@@ -197,6 +197,7 @@ void PROTO_CmdSetTx(proto_tx_fn_t fn, void *user)
 void PROTO_SetBleConnected(bool connected)
 {
     s_ble_connected = connected;
+    TASK_SetBleConnected(connected);
 }
 
 void PROTO_TxRaw(const uint8_t *data, size_t len)
@@ -268,6 +269,25 @@ void PROTO_OnRxBytes(const uint8_t *data, size_t len)
     taskEXIT_CRITICAL();
 }
 
+static void proto_print_rx(const proto_cmd_msg_t *msg)
+{
+    if (msg == NULL)
+    {
+        return;
+    }
+
+    BSP_UART_Print("RX CMD=0x%02X LEN=%u", msg->cmd, (unsigned)msg->len);
+    if (msg->len != 0U)
+    {
+        BSP_UART_Print(" PAYLOAD=");
+        for (uint8_t i = 0U; i < msg->len; i++)
+        {
+            BSP_UART_Print("%02X", msg->payload[i]);
+        }
+    }
+    BSP_UART_Print("\r\n");
+}
+
 static void proto_handle_selftest(const proto_cmd_msg_t *msg)
 {
     uint64_t task_id;
@@ -276,7 +296,7 @@ static void proto_handle_selftest(const proto_cmd_msg_t *msg)
         proto_send_ack(msg->cmd, PROTO_STATUS_PARAM_ERROR);
         return;
     }
-    TASK_SetActiveTaskId(task_id);
+    TASK_StartCollect(task_id, 0U, 0U, 1000U, false, 1U);
     proto_send_ack(msg->cmd, PROTO_STATUS_OK);
 }
 
@@ -302,12 +322,7 @@ static void proto_handle_start_collect(const proto_cmd_msg_t *msg)
         return;
     }
 
-    (void)start_s;
-    (void)duration_s;
-    (void)period_ms;
-
-    TASK_SetActiveTaskId(task_id);
-    TASK_SetCollectEnabled(true);
+    TASK_StartCollect(task_id, start_s, duration_s, period_ms, true, 0U);
     proto_send_ack(msg->cmd, PROTO_STATUS_OK);
 }
 
@@ -320,13 +335,12 @@ static void proto_handle_stop_collect(const proto_cmd_msg_t *msg)
         return;
     }
 
-    if (TASK_GetActiveTaskId() != task_id)
+    if (!TASK_StopCollect(task_id))
     {
         proto_send_ack(msg->cmd, PROTO_STATUS_NOT_FOUND);
         return;
     }
 
-    TASK_SetCollectEnabled(false);
     proto_send_ack(msg->cmd, PROTO_STATUS_OK);
 }
 
@@ -390,34 +404,44 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
         return;
     }
 
-    uint16_t to_read = max_bytes;
-    if ((uint32_t)to_read > (total_bytes - offset))
+    proto_send_ack(msg->cmd, PROTO_STATUS_OK);
+
+    uint16_t chunk_max = (max_bytes == 0U) ? 200U : max_bytes;
+    if (chunk_max > 200U)
     {
-        to_read = (uint16_t)(total_bytes - offset);
+        chunk_max = 200U;
     }
-    if (to_read > 200U)
-    {
-        to_read = 200U;
-    }
+
+    TASK_SetHistorySending(true);
 
     uint8_t data_buf[200];
-    const int nread = APP_Storage_ReadData(task_id, offset, data_buf, (uint32_t)to_read);
-    if (nread <= 0)
-    {
-        proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
-        return;
-    }
-
     uint8_t frame_buf[1 + 2 + 8 + 4 + 4 + 200 + 2];
-    size_t out_len = 0U;
-    if (!PROTO_DataBuildFrame(task_id, offset, total_bytes, data_buf, (uint16_t)nread, frame_buf, sizeof(frame_buf), &out_len))
+    while (offset < total_bytes)
     {
-        proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
-        return;
+        uint16_t to_read = chunk_max;
+        if ((uint32_t)to_read > (total_bytes - offset))
+        {
+            to_read = (uint16_t)(total_bytes - offset);
+        }
+
+        const int nread = APP_Storage_ReadData(task_id, offset, data_buf, (uint32_t)to_read);
+        if (nread <= 0)
+        {
+            break;
+        }
+
+        size_t out_len = 0U;
+        if (!PROTO_DataBuildFrame(task_id, offset, total_bytes, data_buf, (uint16_t)nread, frame_buf, sizeof(frame_buf), &out_len))
+        {
+            break;
+        }
+
+        proto_send(frame_buf, out_len);
+        offset += (uint32_t)nread;
+        vTaskDelay(pdMS_TO_TICKS(5U));
     }
 
-    proto_send_ack(msg->cmd, PROTO_STATUS_OK);
-    proto_send(frame_buf, out_len);
+    TASK_SetHistorySending(false);
 }
 
 void PROTO_UartRxTask(void *pvParameters)
@@ -469,6 +493,7 @@ void PROTO_CmdTask(void *pvParameters)
         proto_cmd_msg_t msg;
         if ((s_cmd_queue != NULL) && (xQueueReceive(s_cmd_queue, &msg, portMAX_DELAY) == pdTRUE))
         {
+            proto_print_rx(&msg);
             switch (msg.cmd)
             {
                 case PROTO_CMD_SELFTEST:

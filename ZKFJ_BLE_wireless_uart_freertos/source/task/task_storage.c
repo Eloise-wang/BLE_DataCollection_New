@@ -24,11 +24,11 @@ static void task_storage_begin_if_needed(uint64_t task_id)
     app_storage_task_meta_t meta;
     (void)memset(&meta, 0, sizeof(meta));
     meta.task_id            = task_id;
-    meta.start_timestamp_ms = 0U;
-    meta.sample_period_ms   = 1000U;
-    meta.duration_ms        = 0U;
+    meta.start_timestamp_ms = TASK_GetLocalBaseMs();
+    meta.sample_period_ms   = TASK_GetCollectPeriodMs();
+    meta.duration_ms        = TASK_GetCollectDurationS() * 1000U;
     meta.record_size        = (uint32_t)sizeof(sensor_record_t);
-    meta.record_version     = 1U;
+    meta.record_version     = 2U;
 
     if (APP_Storage_BeginTask(task_id, &meta))
     {

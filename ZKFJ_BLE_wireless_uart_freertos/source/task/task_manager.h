@@ -24,6 +24,10 @@ extern EventGroupHandle_t g_system_event_group;
 #define TASK_EVENT_BIT_STORAGE_READY     (1U << 1)
 // 队列背压丢包事件位
 #define TASK_EVENT_BIT_QUEUE_DROPPED     (1U << 2)
+#define TASK_EVENT_BIT_COLLECT_DONE      (1U << 3)
+#define TASK_EVENT_BIT_BLE_CONNECTED     (1U << 4)
+#define TASK_EVENT_BIT_HISTORY_SENDING   (1U << 5)
+#define TASK_EVENT_BIT_COLLECTION_PULSE  (1U << 6)
 
 
 // 初始化任务管道资源
@@ -42,6 +46,32 @@ void TASK_SetActiveTaskId(uint64_t task_id);
 bool TASK_GetCollectEnabled(void);
 // 设置采集任务是否启用
 void TASK_SetCollectEnabled(bool enabled);
+
+void TASK_StartCollect(uint64_t task_id,
+                       uint32_t host_epoch_s,
+                       uint32_t duration_s,
+                       uint32_t period_ms,
+                       bool time_valid,
+                       uint32_t forced_total_count);
+bool TASK_StopCollect(uint64_t task_id);
+
+uint32_t TASK_GetTaskGeneration(void);
+
+uint32_t TASK_GetCollectPeriodMs(void);
+uint32_t TASK_GetCollectDurationS(void);
+uint32_t TASK_GetCollectTotalCount(void);
+uint32_t TASK_GetCollectRemainingCount(void);
+uint32_t TASK_ConsumeOneSample(void);
+
+bool TASK_GetTimeBase(uint32_t *host_epoch_s, uint32_t *local_base_ms);
+uint32_t TASK_GetLocalBaseMs(void);
+
+void TASK_MarkCollectDone(void);
+bool TASK_IsCollectDone(void);
+
+void TASK_SetBleConnected(bool connected);
+void TASK_SetHistorySending(bool sending);
+void TASK_RequestCollectionPulse(void);
 
 #ifdef __cplusplus
 }

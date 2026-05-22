@@ -16,6 +16,7 @@
 #include "bsp_ringBuff.h"
 #include "app.h"
 #include "fsl_component_serial_manager.h"
+#include "fsl_os_abstraction.h"
 
 static bool s_inited = false;
 
@@ -28,6 +29,11 @@ static uint8_t s_txStorage[BSP_UART_TX_RING_SIZE];
 static uint8_t s_txChunk[64];
 
 static bool s_rxInited = false;
+
+#if BSP_UART_PRINT_ENABLE
+static OSA_MUTEX_HANDLE_DEFINE(s_printMutexHandle);
+static bool s_printMutexCreated = false;
+#endif
 
 static void bsp_uart_rx_cb(void *callbackParam, serial_manager_callback_message_t *message, serial_manager_status_t status)
 {
@@ -146,6 +152,16 @@ void BSP_UART_Init(void)
     s_txBusy = false;
     bsp_uart_exit_critical(primask);
 
+#if BSP_UART_PRINT_ENABLE
+    if (!s_printMutexCreated)
+    {
+        if (OSA_MutexCreate((osa_mutex_handle_t)s_printMutexHandle) == KOSA_StatusSuccess)
+        {
+            s_printMutexCreated = true;
+        }
+    }
+#endif
+
     s_inited = true;
 }
 
@@ -173,11 +189,18 @@ bool BSP_UART_Write(const uint8_t *data, uint32_t length)
     return ok;
 }
 
+#if BSP_UART_PRINT_ENABLE
 void BSP_UART_Print(const char *fmt, ...)
 {
     if (!s_inited || (fmt == NULL))
     {
         return;
+    }
+
+    bool locked = false;
+    if (s_printMutexCreated)
+    {
+        locked = (OSA_MutexLock((osa_mutex_handle_t)s_printMutexHandle, osaWaitForever_c) == KOSA_StatusSuccess);
     }
 
     char buf[BSP_UART_PRINTF_BUF_SIZE];
@@ -189,6 +212,10 @@ void BSP_UART_Print(const char *fmt, ...)
 
     if (n <= 0)
     {
+        if (locked)
+        {
+            (void)OSA_MutexUnlock((osa_mutex_handle_t)s_printMutexHandle);
+        }
         return;
     }
 
@@ -199,7 +226,13 @@ void BSP_UART_Print(const char *fmt, ...)
     }
 
     (void)BSP_UART_Write((const uint8_t *)buf, len);
+
+    if (locked)
+    {
+        (void)OSA_MutexUnlock((osa_mutex_handle_t)s_printMutexHandle);
+    }
 }
+#endif
 
 bool BSP_UART_TryRead(uint8_t *out, uint32_t out_size, uint32_t *out_read)
 {

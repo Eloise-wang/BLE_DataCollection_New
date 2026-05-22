@@ -1,149 +1,112 @@
-# 上位机 ↔ 设备 命令协议（简化版，BLE/UART 都能用）
+# 细节补充（评审版）
 
-你只需要记住 4 件事：
-- SOF 固定 0xA5
-- 每条命令都带长度 LEN
-- 每条命令都带 CRC16（防误触发）
-- task_id 用 8 字节（TaskId64）
-- RequestHistory 回数据时，增加 TOTAL_BYTES（总有效数据长度），上位机知道何时结束
-- 协议层放在 source/protocol/，专门做“组帧/验帧/分发”
-- 协议层 → 任务层：用一个简单的“命令队列”或“任务通知”把解析后的命令交给任务处理
+本文是对现有实现的对照检查与落地建议，便于你后续逐项收敛需求与代码改动范围。
 
-## 1) 传输方式
+## 1.LED 灯功能（对照检查）
 
-- BLE 调试器里输入 HEX：实际发出去就是字节（byte[]），没问题
-- UART 调试：也可以发 HEX（建议每个命令后加 `\n` 作为分隔）
+| 引脚编号 | 名称 | 需求功能 |
+| :------: | :--- | :--- |
+| 25 | BLE_LED（蓝牙指示灯） | 连上蓝牙，灯亮；断开蓝牙，灯灭 |
+| 14 | Collection_LED（采集指示灯） | 采集时闪烁，其余时候熄灭；采集完成时，长亮 |
+| 13 | Send_LED（发送指示灯） | 发送数据时常亮，发送完熄灭 |
+| 45 | Electricity_LED（电量报警指示灯） | 电量低于 20% 闪烁报警 |
 
-## 2) 帧格式（所有命令统一）
+启动自检：系统启动、所有初始化完成后，这四个灯全部亮一次，验证硬件正常。
 
-字节序：所有多字节整数小端（Little-Endian）。
+现状（代码侧）：
+- 仅实现了 Collection_LED 的周期性 Toggle（未采集时也会闪），以及 Electricity_LED 的低电量闪烁；BLE_LED / Send_LED 目前未与事件绑定。
+- “采集完成长亮/未采集熄灭/按采样点闪一下/启动自检四灯全亮一次” 目前未实现。
 
-CRC16：CRC-16/CCITT-FALSE
-- poly=0x1021, init=0xFFFF, refin=false, refout=false, xorout=0x0000
-- 校验范围：从 `CMD` 到 `PAYLOAD`（不含 SOF，不含 CRC 本身）
+建议改动（如果按需求严格落地）：
+- Collection_LED：仅在“采样瞬间”短闪，或按 period_ms 闪烁；未采集时保持灭；采集完成置常亮（需要一个“任务完成”事件位或状态）。
+- BLE_LED：绑定 BLE 连接/断开事件。
+- Send_LED：绑定“正在发送数据”的窗口（实时上报 / 历史回传都属于发送）。Send_LED只绑定历史回传，不绑定实时上报。
+- 启动自检：在 LED 初始化完成后，四灯同时点亮固定时长（如 1000ms）后恢复各自状态。
 
-帧结构：
-```
-SOF(1)  CMD(1)  LEN(1)  PAYLOAD(N)  CRC16(2)
-0xA5    xx      nn      ...         lo hi
-```
+## 2.串口打印（对照检查）
 
-LEN：PAYLOAD 的字节数（0~255）。
+需求：
+1) 蓝牙连接成功时打印信息；
+2) 收到上位机消息时打印接收到的消息，判断命令是否接收完全；
+3) 采集时打印原始值、电压、物理值；
 
-## 3) 应答规则（设备回上位机）
+现状（代码侧）：
+- 蓝牙连接/断开：已有串口打印（Connected / Disconnected）。
+- 上位机消息打印：协议层解析后目前没有把“完整帧/命令/参数”打印出来。
+- 采集数据打印：当前采集任务没有打印 raw/电压/物理值。
 
-设备收到命令后会回一个“应答帧”，格式同上面一致，只是：
-- CMD = 原 CMD + 0x80（例如请求 0x02，应答就是 0x82）
-- PAYLOAD 固定 1 字节：STATUS
+建议将打印内容统一成“可稳定脚本化解析”的格式，例如：
 
-STATUS：
-- 0x00 OK
-- 0x01 CRC_ERROR
-- 0x02 LEN_ERROR
-- 0x03 CMD_UNSUPPORTED
-- 0x04 PARAM_ERROR
-- 0x05 BUSY
-- 0x06 NOT_FOUND
-- 0x07 STORAGE_ERROR
+这是第 M 次采集，还剩 N 条采集
+pressure_raw=XXXX (V=Y.YYYY) | temperature_raw=XXXX (V=Y.YYYY)
+pressure=PP.PPPP(MPa) | temperature=TT.TT(℃) | liquid_level=LL(L)
 
-## 4) task_id（任务ID）
+备注：现有数据结构中，压力被量化为 kPa（uint16），温度为 0.01℃（int16），时间戳为本机毫秒（uint32）。如果需要打印 MPa/℃/L，请在打印侧做单位换算。
 
-- task_id 使用 8 字节 TaskId64
-- 上位机如果有 16 字节 UUID，可取 UUID 的低 8 字节作为 TaskId64
+## 3.看门狗（对照检查）
 
-## 5) 命令列表（请求 CMD）
+现状（代码侧）：
+- 已有独立看门狗任务定期喂狗；WDOG32 配置为固定配置（enableUpdate=false）。
 
-### CMD=0x01 初测（SelfTest）
-PAYLOAD：
-```
-TASK_ID(8)
-```
+建议补齐（如果你希望“完全实现”更可验证）：
+- 上电启动时读取并打印/记录“是否为看门狗复位”；必要时清除 sticky reset 状态位，避免下一次误判。
 
-### CMD=0x02 开始采集（StartCollect）
-PAYLOAD：
-```
-TASK_ID(8)
-START_TIME_EPOCH_S(4)   // 上位机下发 Unix 秒；0 表示设备只用相对时间
-DURATION_S(4)           // 采集总时长（秒）；0 表示直到 StopCollect
-PERIOD_MS(4)            // 采样周期（毫秒），例如 1000 或 30000
-```
+## 4.实时发送“剩余条数”（需要明确协议口径）
 
-### CMD=0x03 停止采集（StopCollect，提前结束）
-PAYLOAD：
-```
-TASK_ID(8)
-```
-说明：停止产生新记录，存储任务可以把队列里已有数据写完。
+需求：上位机下发采集总时长 + 采集频率后，设备应能计算总采集次数，并在实时上报时告知剩余次数。
 
-### CMD=0x04 请求回收数据（RequestHistory）
-PAYLOAD：
-```
-TASK_ID(8)
-OFFSET(4)      // 从 data.bin 的偏移（字节）
-MAX_BYTES(2)   // 本次希望设备返回的最大字节数
-```
+现状（代码侧）：
+- 启动采集命令携带了 start_s / duration_s / period_ms，但目前没有用于驱动采样调度，也没有计算 total_count/remaining_count。
+- 实时上报帧当前仅包含记录内容（timestamp/pressure/temp/liquid/status），不包含 remaining。
 
-### CMD=0x05 清理任务数据（ClearTask）
-PAYLOAD：
-```
-TASK_ID(8)
-MODE(1)        // 0=仅删 data.bin；1=删 data.bin/meta.bin/log 并删目录
-```
+已采用方案：把 remaining_count 写入每条记录（实时上报/存储/历史回传统一一种记录格式）。
+另外：需要把采样周期从“固定 1s”改为“由 period_ms 驱动”，否则 remaining_count 逻辑与真实采样不一致。（注：采样周期是根据下位机下发的命令来决定的）
 
-## 6) 历史数据返回（设备 → 上位机）
+## 5.液位接入状态与 -1L 存储（当前结构体不支持）
+需求：报文包含 liquid level sensor access state；若显示未接入，flash 也要存储数值，存为 -1L。
 
-设备返回历史数据时，建议用一个非常简单的数据帧（与命令帧分开，避免混淆）：
-```
-SOF(1)=0x5A  LEN(2)  TASK_ID(8)  OFFSET(4)  TOTAL_BYTES(4)  DATA(N)  CRC16(2)
-```
+现状（代码侧）：
+- CAN 解码结构中已有 liquidLevelSenAcSt（接入状态），但记录结构体 sensor_record_t 的 liquid_level 为 uint16，无法表达 -1。
 
-字段说明：
-- LEN：这一帧中，从 TASK_ID 到 DATA 的总字节数（不含 SOF，不含 CRC）
-- TOTAL_BYTES：该任务 data.bin 的总有效数据字节数（上位机用它判断何时结束）
-- DATA：从 data.bin 里读取的连续字节
+建议改动：
+- 或者保持 uint16，但约定 0xFFFF 表示未接入（等价于 -1 的无符号编码）；并同样补充接入状态字段/位。
 
-上位机判断“传输完成”的最简单方式：
-- 当 `OFFSET + DATA长度 >= TOTAL_BYTES` 时，本次任务数据回收结束
+## 6.时间戳（更简单的设计建议）
 
-CRC16 同样用 CRC-16/CCITT-FALSE（校验范围从 LEN 到 DATA）。
+目标：正式采集（A502）下发“实时时间”，设备记录后每次采集都能给出对应时间。
 
-## 6.1) 实时采集数据上报（设备 → 上位机）
+建议口径（简单且实现成本低）：
+- 设备保存两个基准：host_epoch_s（上位机下发的秒级时间）与 local_base_ms（收到命令时本机毫秒）。
+- 每条记录携带 timestamp_s + timestamp_ms（0-999），按：timestamp_s = host_epoch_s + (local_now_ms - local_base_ms)/1000 计算得到。
 
-实时上报时，同样复用 0x5A 数据帧：
-- DATA：直接放一条 `sensor_record_t`（例如 12 字节）
-- OFFSET：用“记录序号 * 记录长度”即可（上位机可用它做简单去重/排序）
-- TOTAL_BYTES：实时上报场景下填 0（表示“不是回收文件，不提供总长度”）
+优点：开始采集时只需要记一次“基准”，每条记录都能直接携带可用时间戳，历史回传也不需要额外换算口径。
 
-## 6.2) 工作状态上报（设备 → 上位机）
 
-工作状态单独用一个状态帧，避免和数据帧混淆：
-```
-SOF(1)=0x5B  LEN(2)  TASK_ID(8)  EVENT_BITS(4)  BATTERY(1)  RESERVED(1)  CRC16(2)
-```
+## 7.初测（A501）/正式采集（A502）/数据回收（A503）与现有实现映射
 
-- EVENT_BITS：直接把设备侧 FreeRTOS 事件组 bit 打包上报（例如采集中、存储就绪、队列丢包）
-- BATTERY：电量百分比 0~100
-- 上报频率：建议 1 秒 1 次（只要 BLE 已连接即可）
+先澄清一个容易混淆的点：这里的 “A5xx” 多数情况下不是“帧头= A5”之外又多了一套命令体系，而是把“帧头 + 命令字节”写在一起的简称。
+例如把一帧的前 2 个字节写成 A5 01，就在文档里写成 “A501”。同理 A502 表示 A5 02。
 
-## 7) 协议层结构（建议放在 source/protocol/）
+需求描述：
+- A501 初测：收到命令后采集，采集完立刻回传（压力/温度/液位）。
+- A502 正式采集：多了实时时间、采集总时长、采集频率等。
+- A503 数据回收：按任务 ID 回传（压力/温度/液位/时间戳），分包直到发完。
 
-```txt
-source/
-├── protocol/
-│   ├── proto_frame.h        # 定义帧格式/CRC/常量
-│   ├── proto_frame.c        # 流式解析：喂字节 → 组帧 → CRC 校验 → 输出“完整命令”
-│   ├── proto_cmd_handler.h  # 命令分发接口：cmd → 调用任务层动作
-│   └── proto_cmd_handler.c  # cmd 处理：Start/Stop/History/Clear → 触发任务层
-```
+现状（代码侧）：
+- 帧头 SOF 已定义为 0xA5（命令帧）/ 0x5A（数据帧）/ 0x5B（状态帧）。
+- 命令号在实现里是 1 字节，已按 A501/A502/A503 做了映射：0x01/0x02/0x03。
+- A501/A502/A503 是“SOF=0xA5 + CMD=0x01/0x02/0x03”的组合写法，并不是把 0xA501 当成 16-bit 的命令号。
 
-## 8) 如何优雅实现“协议层 → 任务层”
+建议你把 A501/A502/A503 先“落成协议层的明确语义”，再决定是否需要新增命令号：
+- A501：可以视为“开始采集 + 采集 N 次 + 完成后自动触发历史回传”。
+- A502：开始采集时必须保存 host 时间基准，并按 duration/period 驱动采样与 remaining_count。
+- A503：请求历史按 task_id + offset 分包回传，直到 total_bytes 结束。
 
-最简单好维护的方式：协议层只做两件事：
-1) 把字节流解析成“命令结构体”
-2) 把命令结构体丢到一个 FreeRTOS 队列（例如 g_cmd_queue）
+## 8.单位（建议写成协议级的精确定义）
 
-任务层（例如一个 Task_Protocol 或复用你已有的 BLE 主循环）从 g_cmd_queue 取命令，然后：
-- CMD=0x02：调用 TASK_SetActiveTaskId(...) + TASK_SetCollectEnabled(true)
-- CMD=0x03：调用 TASK_SetCollectEnabled(false)
-- CMD=0x04：读取 data.bin 分段组包，通过 BLE notify 或 UART 发回上位机
-- CMD=0x05：调用 APP_Storage_DeleteTask(...) 清理任务
+建议明确字段单位与缩放（与当前实现一致）：
+- 温度：int16，单位 0.01 ℃（centi-℃）
+- 压力：uint16，单位 kPa（由 MPa × 1000 得到）
+- 液位：uint16，单位 L；未接入时为 0xFFFF（等价 -1L）
+- 时间戳：uint32 timestamp_s + uint16 timestamp_ms
+- 剩余条数：uint32 remaining_count

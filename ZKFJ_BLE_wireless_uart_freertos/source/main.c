@@ -21,7 +21,10 @@
 #include "app.h"
 #include "app_conn.h"
 #include "bsp_crc.h"
+#include "bsp_uart.h"
+#include "bsp_wdog.h"
 #include "fsl_os_abstraction.h"
+#include "fsl_cmc.h"
 #include "task_manager.h"
 
 /************************************************************************************
@@ -49,6 +52,16 @@ static void start_task(void *argument)
 {
     /* Start Application services (timers, serial manager, low power, led, button, etc..) */
     APP_InitServices();
+
+    BSP_UART_Init();
+    const uint32_t srs = BSP_WDOG_GetResetStatus();
+    const bool wdog_reset = BSP_WDOG_WasResetByWatchdog();
+    BSP_UART_Print("reset_status=0x%08lX wdog=%u\r\n", (unsigned long)srs, (unsigned)wdog_reset);
+    if (wdog_reset)
+    {
+        const uint32_t mask = (uint32_t)kCMC_Watchdog0Reset | (uint32_t)kCMC_Watchdog1Reset;
+        BSP_WDOG_ClearResetStatus(mask);
+    }
 
     TASK_InitPipelineResources();
     TASK_CreateAllTasks();

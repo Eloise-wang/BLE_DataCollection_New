@@ -25,12 +25,14 @@ extern "C" {
 // 传感器数据结构体对齐
 typedef struct APP_PACKED
 {
-    uint32_t timestamp_ms;
+    uint32_t timestamp_s;
+    uint16_t timestamp_ms;
     int16_t temperature_centi_c;
     uint16_t pressure_kpa;
     uint16_t liquid_level;
+    uint32_t remaining_count;
+    uint8_t liquid_access_state;
     uint8_t status;
-    uint8_t reserved;
 } sensor_record_t;
 
 typedef uint8_t app_cmd_t;
@@ -45,6 +47,7 @@ typedef uint8_t app_cmd_t;
 #define APP_RECORD_STATUS_SENSOR_ERROR   ((uint8_t)0x01U)
 #define APP_RECORD_STATUS_CAN_ERROR      ((uint8_t)0x02U)
 #define APP_RECORD_STATUS_STORAGE_ERROR  ((uint8_t)0x04U)
+#define APP_RECORD_STATUS_LIQUID_OFFLINE ((uint8_t)0x08U)
 
 #ifdef __cplusplus
 }

@@ -25,13 +25,20 @@
 #define BSP_UART_PRINTF_BUF_SIZE 256U
 #endif
 
+#ifndef BSP_UART_PRINT_ENABLE
+#define BSP_UART_PRINT_ENABLE 1
+#endif
+
 // 初始化UART
 void BSP_UART_Init(void);
 
 bool BSP_UART_Write(const uint8_t *data, uint32_t length);
 
-// 打印UART数据
+#if BSP_UART_PRINT_ENABLE
 void BSP_UART_Print(const char *fmt, ...);
+#else
+#define BSP_UART_Print(...) do { } while (0)
+#endif
 
 // 尝试读取UART接收缓冲区数据（非阻塞）
 bool BSP_UART_TryRead(uint8_t *out, uint32_t out_size, uint32_t *out_read);
