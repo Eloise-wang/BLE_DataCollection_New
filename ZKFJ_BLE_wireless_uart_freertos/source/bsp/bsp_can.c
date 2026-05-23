@@ -11,6 +11,7 @@
 
 #include "bsp_ringBuff.h"
 #include "fsl_clock.h"
+#include "fsl_os_abstraction.h"
 
 typedef struct
 {
@@ -31,26 +32,12 @@ static const bsp_can_mb_map_t s_mbMap[] = {
     {BSP_CAN_RX_MB0, &s_rxFrame0},
 };
 
-//进入临界区
-static uint32_t bsp_can_enter_critical(void)
-{
-    uint32_t primask;
-    __asm volatile("MRS %0, PRIMASK" : "=r"(primask));
-    __disable_irq();
-    return primask;
-}
-
-//退出临界区
-static void bsp_can_exit_critical(uint32_t primask)
-{
-    __asm volatile("MSR PRIMASK, %0" : : "r"(primask));
-}
-
 static bool bsp_can_rb_push_frame(const bsp_can_frame_t *frame)
 {
-    const uint32_t key = bsp_can_enter_critical();
-    const bool ok      = BSP_RingBuff_Push(&s_rxRb, (const uint8_t *)frame, (uint32_t)sizeof(*frame));
-    bsp_can_exit_critical(key);
+    uint32_t sr;
+    OSA_EnterCritical(&sr);
+    const bool ok = BSP_RingBuff_Push(&s_rxRb, (const uint8_t *)frame, (uint32_t)sizeof(*frame));
+    OSA_ExitCritical(sr);
     return ok;
 }
 
@@ -58,13 +45,14 @@ static bool bsp_can_rb_push_frame(const bsp_can_frame_t *frame)
 static bool bsp_can_rb_pop_frame(bsp_can_frame_t *out_frame)
 {
     bool ok = false;
-    const uint32_t key = bsp_can_enter_critical();
+    uint32_t sr;
+    OSA_EnterCritical(&sr);
     if (BSP_RingBuff_Used(&s_rxRb) >= (uint32_t)sizeof(*out_frame))
     {
         ok = (BSP_RingBuff_Pop(&s_rxRb, (uint8_t *)out_frame, (uint32_t)sizeof(*out_frame)) ==
               (uint32_t)sizeof(*out_frame));
     }
-    bsp_can_exit_critical(key);
+    OSA_ExitCritical(sr);
     return ok;
 }
 

@@ -12,6 +12,10 @@
 #include "bsp_can.h"
 #include "fsl_os_abstraction.h"
 
+#ifndef APP_CAN_PROCESS_MAX_FRAMES
+#define APP_CAN_PROCESS_MAX_FRAMES 10U
+#endif
+
 typedef struct
 {
     app_can_capture_state_t state;
@@ -77,8 +81,12 @@ void APP_CAN_Process(void)
 
     app_can_update_dropped();
 
-    while (BSP_CAN_TryReadFrame(&frame))
+    for (uint32_t i = 0U; i < APP_CAN_PROCESS_MAX_FRAMES; i++)
     {
+        if (!BSP_CAN_TryReadFrame(&frame))
+        {
+            break;
+        }
         if ((frame.id == BSP_CAN_FILTER_ID0) && (frame.dlc == ALGO_CAN_DLC) && frame.is_extended && (!frame.is_remote))
         {
             algo_can_gcu1_t decoded;

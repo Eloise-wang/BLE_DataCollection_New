@@ -17,6 +17,34 @@ extern QueueHandle_t g_sensor_data_queue;
 // 系统事件组
 extern EventGroupHandle_t g_system_event_group;
 
+#ifndef TASK_SENSOR_QUEUE_DEPTH
+#define TASK_SENSOR_QUEUE_DEPTH 60U
+#endif
+
+#ifndef TASK_STACK_WDOG
+#define TASK_STACK_WDOG 256U
+#endif
+
+#ifndef TASK_STACK_PROTO
+#define TASK_STACK_PROTO 512U
+#endif
+
+#ifndef TASK_STACK_UART_CMD
+#define TASK_STACK_UART_CMD 384U
+#endif
+
+#ifndef TASK_STACK_SENSOR
+#define TASK_STACK_SENSOR 384U
+#endif
+
+#ifndef TASK_STACK_STORAGE
+#define TASK_STACK_STORAGE 1024U
+#endif
+
+#ifndef TASK_STACK_LED
+#define TASK_STACK_LED 256U
+#endif
+
 
 // 任务事件位定义
 #define TASK_EVENT_BIT_COLLECT_RUNNING   (1U << 0)

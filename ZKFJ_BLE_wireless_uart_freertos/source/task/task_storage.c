@@ -8,17 +8,18 @@
 
 static bool s_storage_ready;
 static uint64_t s_storage_task_id;
+static TickType_t s_next_retry_tick;
 
-static void task_storage_begin_if_needed(uint64_t task_id)
+static bool task_storage_begin_if_needed(uint64_t task_id)
 {
     if (s_storage_ready)
     {
-        return;
+        return true;
     }
 
     if (!APP_Storage_Init())
     {
-        return;
+        return false;
     }
 
     app_storage_task_meta_t meta;
@@ -37,7 +38,9 @@ static void task_storage_begin_if_needed(uint64_t task_id)
         {
             (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
         }
+        return true;
     }
+    return false;
 }
 
 void TASK_StorageTask(void *pvParameters)
@@ -53,10 +56,21 @@ void TASK_StorageTask(void *pvParameters)
         }
 
         const uint64_t active_task_id = TASK_GetActiveTaskId();
+        const TickType_t now = xTaskGetTickCount();
         if (!s_storage_ready)
         {
+            if (now < s_next_retry_tick)
+            {
+                vTaskDelay(pdMS_TO_TICKS(50U));
+                continue;
+            }
             s_storage_task_id = active_task_id;
-            task_storage_begin_if_needed(s_storage_task_id);
+            if (!task_storage_begin_if_needed(s_storage_task_id))
+            {
+                s_next_retry_tick = now + pdMS_TO_TICKS(500U);
+                vTaskDelay(pdMS_TO_TICKS(50U));
+                continue;
+            }
         }
         else if ((active_task_id != s_storage_task_id) && (uxQueueMessagesWaiting(g_sensor_data_queue) == 0U))
         {
@@ -66,7 +80,7 @@ void TASK_StorageTask(void *pvParameters)
                 (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
             }
             s_storage_task_id = active_task_id;
-            task_storage_begin_if_needed(s_storage_task_id);
+            (void)task_storage_begin_if_needed(s_storage_task_id);
         }
 
         sensor_record_t record;

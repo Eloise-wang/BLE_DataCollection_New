@@ -21,6 +21,7 @@ static int16_t task_sensor_temp_to_centi_c(float celsius)
     {
         scaled = -32768.0f;
     }
+    scaled += (scaled >= 0.0f) ? 0.5f : -0.5f;
     return (int16_t)scaled;
 }
 
@@ -35,6 +36,7 @@ static uint16_t task_sensor_pressure_to_kpa(float mpa)
     {
         scaled = 65535.0f;
     }
+    scaled += 0.5f;
     return (uint16_t)scaled;
 }
 

@@ -35,7 +35,7 @@ void TASK_InitPipelineResources(void)
 {
     if (g_sensor_data_queue == NULL)
     {
-        g_sensor_data_queue = xQueueCreate(20U, (UBaseType_t)sizeof(sensor_record_t));
+        g_sensor_data_queue = xQueueCreate(TASK_SENSOR_QUEUE_DEPTH, (UBaseType_t)sizeof(sensor_record_t));
         assert(g_sensor_data_queue != NULL);
     }
 
@@ -55,12 +55,12 @@ void TASK_InitPipelineResources(void)
 
 void TASK_CreateAllTasks(void)
 {
-    (void)xTaskCreate(TASK_WatchdogTask, "Task_Wdog", 256U, NULL, 5U, NULL);
-    (void)xTaskCreate(PROTO_CmdTask, "Task_Proto", 512U, NULL, 4U, NULL);
-    (void)xTaskCreate(PROTO_UartRxTask, "Task_UartCmd", 384U, NULL, 4U, NULL);
-    (void)xTaskCreate(TASK_SensorCollectTask, "Task_Sensor", 384U, NULL, 3U, NULL);
-    (void)xTaskCreate(TASK_StorageTask, "Task_Storage", 1024U, NULL, 2U, NULL);
-    (void)xTaskCreate(TASK_LedTask, "Task_Led", 256U, NULL, 1U, NULL);
+    (void)xTaskCreate(TASK_WatchdogTask, "Task_Wdog", TASK_STACK_WDOG, NULL, 5U, NULL);
+    (void)xTaskCreate(PROTO_CmdTask, "Task_Proto", TASK_STACK_PROTO, NULL, 4U, NULL);
+    (void)xTaskCreate(PROTO_UartRxTask, "Task_UartCmd", TASK_STACK_UART_CMD, NULL, 4U, NULL);
+    (void)xTaskCreate(TASK_SensorCollectTask, "Task_Sensor", TASK_STACK_SENSOR, NULL, 3U, NULL);
+    (void)xTaskCreate(TASK_StorageTask, "Task_Storage", TASK_STACK_STORAGE, NULL, 2U, NULL);
+    (void)xTaskCreate(TASK_LedTask, "Task_Led", TASK_STACK_LED, NULL, 1U, NULL);
 }
 
 uint64_t TASK_GetActiveTaskId(void)
