@@ -259,6 +259,41 @@ int BSP_FS_Remove(const char *path)
     return err;
 }
 
+bool BSP_FS_Format(void)
+{
+    if (!s_initialized)
+    {
+        if (!BSP_FS_Init())
+        {
+            return false;
+        }
+    }
+
+    if (!s_mounted)
+    {
+        return false;
+    }
+
+    if (bsp_fs_lock(5000U) != 0)
+    {
+        return false;
+    }
+
+    const int uerr = lfs_unmount(&s_lfs);
+    if (uerr != 0)
+    {
+        bsp_fs_unlock();
+        return false;
+    }
+    const int ferr = lfs_format(&s_lfs, &s_lfsCfg);
+    const int merr = lfs_mount(&s_lfs, &s_lfsCfg);
+
+    bsp_fs_unlock();
+
+    s_mounted = ((ferr == 0) && (merr == 0));
+    return s_mounted;
+}
+
 int BSP_FS_FileAppend(const char *path, const void *data, uint32_t size)
 {
     if ((path == NULL) || (data == NULL) || (size == 0U) || (!s_mounted))

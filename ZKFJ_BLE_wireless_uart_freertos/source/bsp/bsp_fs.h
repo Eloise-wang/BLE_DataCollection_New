@@ -27,6 +27,9 @@ int BSP_FS_Mkdir(const char *path);
 // 删除目录
 int BSP_FS_Remove(const char *path);
 
+// 格式化文件系统（清空所有任务数据）
+bool BSP_FS_Format(void);
+
 //追加写入文件
 int BSP_FS_FileAppend(const char *path, const void *data, uint32_t size);
 // 写入文件并截断

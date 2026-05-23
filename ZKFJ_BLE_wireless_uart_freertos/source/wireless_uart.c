@@ -87,7 +87,7 @@
 #define mAppUartFlushIntervalInMs_c     (7)     /* Flush Timeout in Ms */
 
 #define mBatteryLevelReportInterval_c   (10)    /* battery level report interval in seconds  */
-#define mStatusReportInterval_c         (1)     /* status report interval in seconds */
+#define mStatusReportInterval_c         (5)     /* status report interval in seconds */
 
 #define gAllowToBlock_d                 (TRUE)
 #define gNoBlock_d                      (FALSE)

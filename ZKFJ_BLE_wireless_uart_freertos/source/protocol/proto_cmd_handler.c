@@ -15,6 +15,7 @@
 #include "task.h"
 
 #include "app_storage.h"
+#include "bsp_fs.h"
 #include "bsp_uart.h"
 #include "proto_frame.h"
 #include "sensors.h"
@@ -360,12 +361,21 @@ static void proto_handle_clear_task(const proto_cmd_msg_t *msg)
     }
 
     const uint8_t mode = msg->payload[8];
-    (void)mode;
-
-    if (!APP_Storage_DeleteTask(task_id))
+    if (mode == 0U)
     {
-        proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
-        return;
+        if (!APP_Storage_DeleteTask(task_id))
+        {
+            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+            return;
+        }
+    }
+    else
+    {
+        if (!BSP_FS_Format())
+        {
+            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+            return;
+        }
     }
 
     proto_send_ack(msg->cmd, PROTO_STATUS_OK);
@@ -404,20 +414,24 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
         return;
     }
 
-    proto_send_ack(msg->cmd, PROTO_STATUS_OK);
-
     uint16_t chunk_max = (max_bytes == 0U) ? 200U : max_bytes;
     if (chunk_max > 200U)
     {
         chunk_max = 200U;
     }
 
-    TASK_SetHistorySending(true);
-
     uint8_t data_buf[200];
     uint8_t frame_buf[1 + 2 + 8 + 4 + 4 + 200 + 2];
+    proto_send_ack(msg->cmd, PROTO_STATUS_OK);
+    TASK_SetHistorySending(true);
+
     while (offset < total_bytes)
     {
+        if ((!s_tx_is_uart) && (!s_ble_connected))
+        {
+            break;
+        }
+
         uint16_t to_read = chunk_max;
         if ((uint32_t)to_read > (total_bytes - offset))
         {
