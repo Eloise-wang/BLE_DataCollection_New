@@ -1,6 +1,7 @@
 #include "task_manager.h"
 
 #include <string.h>
+#include <limits.h>
 #include <stdint.h>
 
 #include "app_can.h"
@@ -134,6 +135,14 @@ void TASK_SensorCollectTask(void *pvParameters)
         {
             record.status |= APP_RECORD_STATUS_SENSOR_ERROR;
         }
+        if (sensor.temp_diag != APP_SENSOR_DIAG_OK)
+        {
+            record.temperature_centi_c = (int16_t)INT16_MIN;
+        }
+        if (sensor.press_diag != APP_SENSOR_DIAG_OK)
+        {
+            record.pressure_kpa = 0xFFFFU;
+        }
         if (can_diag != APP_CAN_DIAG_OK)
         {
             record.status |= APP_RECORD_STATUS_CAN_ERROR;
@@ -151,14 +160,27 @@ void TASK_SensorCollectTask(void *pvParameters)
         const uint32_t press_mv = (uint32_t)(sensor.press_voltage_v * 1000.0f + 0.5f);
         const uint32_t temp_mv  = (uint32_t)(sensor.temp_voltage_v * 1000.0f + 0.5f);
 
-        const unsigned pressure_int = (unsigned)(record.pressure_kpa / 1000U);
-        const unsigned pressure_frac = (unsigned)(record.pressure_kpa % 1000U);
+        const bool pressure_valid = (sensor.press_diag == APP_SENSOR_DIAG_OK) && (record.pressure_kpa != 0xFFFFU);
+        const bool temp_valid = (sensor.temp_diag == APP_SENSOR_DIAG_OK) && (record.temperature_centi_c != (int16_t)INT16_MIN);
 
-        int temp_int = (int)(record.temperature_centi_c / 100);
-        int temp_frac = (int)(record.temperature_centi_c % 100);
-        if (temp_frac < 0)
+        unsigned pressure_int = 0U;
+        unsigned pressure_frac = 0U;
+        if (pressure_valid)
         {
-            temp_frac = -temp_frac;
+            pressure_int = (unsigned)(record.pressure_kpa / 1000U);
+            pressure_frac = (unsigned)(record.pressure_kpa % 1000U);
+        }
+
+        int temp_int = 0;
+        int temp_frac = 0;
+        if (temp_valid)
+        {
+            temp_int = (int)(record.temperature_centi_c / 100);
+            temp_frac = (int)(record.temperature_centi_c % 100);
+            if (temp_frac < 0)
+            {
+                temp_frac = -temp_frac;
+            }
         }
 
         BSP_UART_Print("pressure_raw=%u (mV=%lu) | temperature_raw=%u (mV=%lu)\r\n",
@@ -168,20 +190,61 @@ void TASK_SensorCollectTask(void *pvParameters)
                        (unsigned long)temp_mv);
         if ((record.status & APP_RECORD_STATUS_LIQUID_OFFLINE) != 0U)
         {
-            BSP_UART_Print("pressure=%u.%03u(MPa) temperature=%d.%02d(C) liquid_level=-1(L)\r\n",
-                           pressure_int,
-                           pressure_frac,
-                           temp_int,
-                           temp_frac);
+            if (!pressure_valid && !temp_valid)
+            {
+                BSP_UART_Print("pressure=N/A temperature=N/A liquid_level=-1(L)\r\n");
+            }
+            else if (!pressure_valid)
+            {
+                BSP_UART_Print("pressure=N/A temperature=%d.%02d(C) liquid_level=-1(L)\r\n",
+                               temp_int,
+                               temp_frac);
+            }
+            else if (!temp_valid)
+            {
+                BSP_UART_Print("pressure=%u.%03u(MPa) temperature=N/A liquid_level=-1(L)\r\n",
+                               pressure_int,
+                               pressure_frac);
+            }
+            else
+            {
+                BSP_UART_Print("pressure=%u.%03u(MPa) temperature=%d.%02d(C) liquid_level=-1(L)\r\n",
+                               pressure_int,
+                               pressure_frac,
+                               temp_int,
+                               temp_frac);
+            }
         }
         else
         {
-            BSP_UART_Print("pressure=%u.%03u(MPa) temperature=%d.%02d(C) liquid_level=%u(L)\r\n",
-                           pressure_int,
-                           pressure_frac,
-                           temp_int,
-                           temp_frac,
-                           (unsigned)record.liquid_level);
+            if (!pressure_valid && !temp_valid)
+            {
+                BSP_UART_Print("pressure=N/A temperature=N/A liquid_level=%u(L)\r\n",
+                               (unsigned)record.liquid_level);
+            }
+            else if (!pressure_valid)
+            {
+                BSP_UART_Print("pressure=N/A temperature=%d.%02d(C) liquid_level=%u(L)\r\n",
+                               temp_int,
+                               temp_frac,
+                               (unsigned)record.liquid_level);
+            }
+            else if (!temp_valid)
+            {
+                BSP_UART_Print("pressure=%u.%03u(MPa) temperature=N/A liquid_level=%u(L)\r\n",
+                               pressure_int,
+                               pressure_frac,
+                               (unsigned)record.liquid_level);
+            }
+            else
+            {
+                BSP_UART_Print("pressure=%u.%03u(MPa) temperature=%d.%02d(C) liquid_level=%u(L)\r\n",
+                               pressure_int,
+                               pressure_frac,
+                               temp_int,
+                               temp_frac,
+                               (unsigned)record.liquid_level);
+            }
         }
 #endif
 

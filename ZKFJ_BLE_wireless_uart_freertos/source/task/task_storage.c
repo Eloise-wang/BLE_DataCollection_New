@@ -8,6 +8,7 @@
 
 static bool s_storage_ready;
 static uint64_t s_storage_task_id;
+static uint32_t s_storage_task_gen;
 static TickType_t s_next_retry_tick;
 
 static bool task_storage_begin_if_needed(uint64_t task_id)
@@ -34,6 +35,7 @@ static bool task_storage_begin_if_needed(uint64_t task_id)
     if (APP_Storage_BeginTask(task_id, &meta))
     {
         s_storage_ready = true;
+        s_storage_task_gen = TASK_GetTaskGeneration();
         if (g_system_event_group != NULL)
         {
             (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
@@ -56,6 +58,7 @@ void TASK_StorageTask(void *pvParameters)
         }
 
         const uint64_t active_task_id = TASK_GetActiveTaskId();
+        const uint32_t active_gen = TASK_GetTaskGeneration();
         const TickType_t now = xTaskGetTickCount();
         if (!s_storage_ready)
         {
@@ -71,6 +74,17 @@ void TASK_StorageTask(void *pvParameters)
                 vTaskDelay(pdMS_TO_TICKS(50U));
                 continue;
             }
+        }
+        else if ((active_task_id == s_storage_task_id) && (active_gen != s_storage_task_gen))
+        {
+            s_storage_ready = false;
+            if (g_system_event_group != NULL)
+            {
+                (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
+            }
+            (void)xQueueReset(g_sensor_data_queue);
+            s_storage_task_id = active_task_id;
+            (void)task_storage_begin_if_needed(s_storage_task_id);
         }
         else if ((active_task_id != s_storage_task_id) && (uxQueueMessagesWaiting(g_sensor_data_queue) == 0U))
         {

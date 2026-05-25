@@ -38,6 +38,8 @@ bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta
 {
     char dir[APP_STORAGE_DIR_MAX];
     char metaPath[APP_STORAGE_PATH_MAX];
+    char dataPath[APP_STORAGE_PATH_MAX];
+    char logPath[APP_STORAGE_PATH_MAX];
 
     if (!BSP_FS_IsMounted())
     {
@@ -49,6 +51,11 @@ bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta
     {
         return false;
     }
+
+    app_storage_task_path(dataPath, task_id, "data.bin");
+    (void)BSP_FS_Remove(dataPath);
+    app_storage_task_path(logPath, task_id, "sys.log");
+    (void)BSP_FS_Remove(logPath);
 
     if (meta != NULL)
     {

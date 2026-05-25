@@ -119,7 +119,17 @@ void BSP_CAN_Init(void)
     config.enableIndividMask = true;
     config.maxMbNum        = 16U;
 
-    const uint32_t canClock = CLOCK_GetIpFreq(kCLOCK_Can0);
+    uint32_t canClock = CLOCK_GetIpFreq(kCLOCK_Can0);
+    if (canClock == 0U)
+    {
+        CLOCK_SetIpSrc(kCLOCK_Can0, kCLOCK_IpSrcFro192M);
+        CLOCK_SetIpSrcDiv(kCLOCK_Can0, 3U);
+        canClock = CLOCK_GetIpFreq(kCLOCK_Can0);
+    }
+    if (canClock == 0U)
+    {
+        return;
+    }
     FLEXCAN_Init(BSP_CAN_BASE, &config, canClock);
 
     FLEXCAN_SetRxMbGlobalMask(BSP_CAN_BASE, FLEXCAN_RX_MB_EXT_MASK(0x1FFFFFFFU, 1U, 1U));

@@ -26,6 +26,31 @@ extern LPSPI_Type *BOARD_GetLpspiForNorFlash(void);
 /*******************************************************************************
  * Code
  ******************************************************************************/
+static uint32_t lpspi_nor_guess_size_bytes(const flash_id_t *flashId, uint32_t fallbackBytes)
+{
+    if (flashId == NULL)
+    {
+        return fallbackBytes;
+    }
+
+    const uint8_t sizeCode = flashId->did[1];
+    switch (sizeCode)
+    {
+        case 0x14U:
+            return 1U * 1024U * 1024U;
+        case 0x15U:
+            return 2U * 1024U * 1024U;
+        case 0x16U:
+            return 4U * 1024U * 1024U;
+        case 0x17U:
+            return 8U * 1024U * 1024U;
+        case 0x18U:
+            return 16U * 1024U * 1024U;
+        default:
+            return fallbackBytes;
+    }
+}
+
 /*!
  * @brief Initialize NOR FLASH devices.
  *
@@ -82,6 +107,10 @@ status_t Nor_Flash_Init(nor_config_t *config, nor_handle_t *handle)
         {
             break;
         }
+
+        const uint32_t sizeBytes = lpspi_nor_guess_size_bytes(&flashId, memConfig->bytesInMemorySize);
+        memConfig->bytesInMemorySize = sizeBytes;
+        handle->bytesInMemorySize = sizeBytes;
 
         initStatus = kStatus_Success;
     } while (false);

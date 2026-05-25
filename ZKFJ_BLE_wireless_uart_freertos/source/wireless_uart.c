@@ -729,6 +729,8 @@ static void BleApp_ConnectionCallback
         {
             Serial_Print("Disconnected from device ", gAllowToBlock_d);
             Serial_PrintDec(peerDeviceId);
+            Serial_Print(" reason=0x", gAllowToBlock_d);
+            Serial_PrintHex((uint32_t)pConnectionEvent->eventData.disconnectedEvent.reason);
             Serial_Print(".\n\r", gAllowToBlock_d);
 
             maPeerInformation[peerDeviceId].appState = mAppIdle_c;
@@ -1126,13 +1128,20 @@ static void BleApp_StateMachineHandler
                 }
                 else
                 {
-                    /* Moving to Service Discovery State*/
-                    maPeerInformation[peerDeviceId].appState = mAppServiceDisc_c;
+                    if (maPeerInformation[peerDeviceId].gapRole == gGapPeripheral_c)
+                    {
+                        maPeerInformation[peerDeviceId].appState = mAppRunning_c;
+                    }
+                    else
+                    {
+                        /* Moving to Service Discovery State*/
+                        maPeerInformation[peerDeviceId].appState = mAppServiceDisc_c;
 
-                    /* Start Service Discovery*/
-                    (void)BleServDisc_FindService(peerDeviceId,
-                            gBleUuidType128_c,
-                            temp.pUuidObj);
+                        /* Start Service Discovery*/
+                        (void)BleServDisc_FindService(peerDeviceId,
+                                gBleUuidType128_c,
+                                temp.pUuidObj);
+                    }
                 }
             }
         }
@@ -1529,7 +1538,6 @@ static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user)
 
     if (GattDb_FindCccdHandleForCharValueHandle((uint16_t)value_uart_notify, &cccdHandle) != gBleSuccess_c)
     {
-        (void)BSP_UART_Write(data, (uint32_t)len);
         return;
     }
 
@@ -1551,7 +1559,6 @@ static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user)
 
         if (GattDb_WriteAttribute((uint16_t)value_uart_notify, (uint16_t)chunkLen, (uint8_t *)&data[pos]) != gBleSuccess_c)
         {
-            (void)BSP_UART_Write(&data[pos], (uint32_t)chunkLen);
             return;
         }
 
@@ -1571,7 +1578,7 @@ static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user)
 
         if (!sent)
         {
-            (void)BSP_UART_Write(&data[pos], (uint32_t)chunkLen);
+            return;
         }
 
         pos += chunkLen;

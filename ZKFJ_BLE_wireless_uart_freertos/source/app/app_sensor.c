@@ -79,6 +79,15 @@ bool APP_Sensor_Collect(app_sensor_data_t *out_data)
             out_data->temp_voltage_v     = algo_adc_raw_to_voltage(out_data->temp_raw);
             out_data->temp_resistance_ohm = algo_voltage_to_resistance_pt1000(out_data->temp_voltage_v);
             out_data->temp_celsius       = algo_pt1000_resistance_to_temperature_c(out_data->temp_resistance_ohm);
+
+            if ((out_data->temp_voltage_v < 0.05f) || (out_data->temp_voltage_v > 3.0f))
+            {
+                out_data->temp_diag |= APP_SENSOR_DIAG_SENSOR_OFFLINE;
+            }
+            if ((out_data->temp_celsius < -100.0f) || (out_data->temp_celsius > 300.0f))
+            {
+                out_data->temp_diag |= APP_SENSOR_DIAG_CONVERT_INVALID;
+            }
         }
     }
 

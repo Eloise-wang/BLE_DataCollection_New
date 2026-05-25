@@ -5,7 +5,7 @@ PRIMARY_SERVICE(service_gatt, gBleSig_GenericAttributeProfile_d)
 
 PRIMARY_SERVICE(service_gap, gBleSig_GenericAccessProfile_d)
     CHARACTERISTIC(char_device_name, gBleSig_GapDeviceName_d, (gGattCharPropRead_c) )
-            VALUE(value_device_name, gBleSig_GapDeviceName_d, (gPermissionFlagReadable_c), 6, "ZZL_01")
+            VALUE(value_device_name, gBleSig_GapDeviceName_d, (gPermissionFlagReadable_c), 8, "ZZL_TEST")
     CHARACTERISTIC(char_appearance, gBleSig_GapAppearance_d, (gGattCharPropRead_c) )
             VALUE(value_appearance, gBleSig_GapAppearance_d, (gPermissionFlagReadable_c), 2, 0x00, 0x00)
     CHARACTERISTIC(char_security_levels, gBleSig_GattSecurityLevels_d, (gGattCharPropRead_c) )

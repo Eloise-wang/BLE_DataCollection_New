@@ -145,7 +145,7 @@ bool BSP_FS_Init(void)
         s_mounted = false;
         return false;
     }
-    s_norHandle.bytesInMemorySize = s_memCfg.bytesInMemorySize;
+    s_memCfg.bytesInMemorySize = s_norHandle.bytesInMemorySize;
 
     (void)memset(&s_lfs, 0, sizeof(s_lfs));
     (void)memset(&s_lfsCfg, 0, sizeof(s_lfsCfg));
