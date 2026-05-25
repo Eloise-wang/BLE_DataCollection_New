@@ -48,7 +48,7 @@ static void BSP_ADC_InitHw(void)
 
     LPADC_GetDefaultConfig(&lpadcConfig);
     lpadcConfig.enableAnalogPreliminary = true;
-    lpadcConfig.referenceVoltageSource  = kLPADC_ReferenceVoltageAlt2;
+    lpadcConfig.referenceVoltageSource  = kLPADC_ReferenceVoltageAlt1;
     lpadcConfig.conversionAverageMode   = kLPADC_ConversionAverage128;
     LPADC_Init(BSP_ADC_BASE, &lpadcConfig);
 
