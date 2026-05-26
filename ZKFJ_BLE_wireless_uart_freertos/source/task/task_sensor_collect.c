@@ -7,6 +7,7 @@
 #include "app_can.h"
 #include "app_global.h"
 #include "app_sensor.h"
+#include "bsp_can.h"
 #include "bsp_uart.h"
 #include "proto_cmd_handler.h"
 #include "task.h"
@@ -96,8 +97,10 @@ void TASK_SensorCollectTask(void *pvParameters)
         (void)APP_Sensor_Collect(&sensor);
 
         algo_can_gcu1_t gcu1;
+        uint32_t can_rx_timestamp_ms = 0U;
+        uint32_t can_rx_age_ms = 0U;
         app_can_diag_t can_diag;
-        (void)APP_CAN_GetLatest(&gcu1, NULL, NULL, &can_diag);
+        (void)APP_CAN_GetLatest(&gcu1, &can_rx_timestamp_ms, &can_rx_age_ms, &can_diag);
 
         sensor_record_t record;
         (void)memset(&record, 0, sizeof(record));
@@ -121,14 +124,17 @@ void TASK_SensorCollectTask(void *pvParameters)
         record.status               = APP_RECORD_STATUS_OK;
         record.liquid_access_state  = gcu1.liquidLevelSenAcSt;
 
-        if (record.liquid_access_state == 0U)
+        const uint16_t liquid_raw = gcu1.residualFluidVolume;
+        const bool can_offline = ((can_diag & APP_CAN_DIAG_OFFLINE) != 0U);
+        const bool liquid_value_valid = (liquid_raw != 0xFFFFU) && (liquid_raw != 0x0FFFU);
+        if (!can_offline && liquid_value_valid)
         {
-            record.liquid_level = 0xFFFFU;
-            record.status |= APP_RECORD_STATUS_LIQUID_OFFLINE;
+            record.liquid_level = liquid_raw;
         }
         else
         {
-            record.liquid_level = gcu1.residualFluidVolume;
+            record.liquid_level = 0xFFFFU;
+            record.status |= APP_RECORD_STATUS_LIQUID_OFFLINE;
         }
 
         if (sensor.global_diag != APP_SENSOR_DIAG_OK)

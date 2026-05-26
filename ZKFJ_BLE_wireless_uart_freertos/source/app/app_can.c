@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "bsp_can.h"
+#include "bsp_uart.h"
 #include "fsl_os_abstraction.h"
 
 #ifndef APP_CAN_PROCESS_MAX_FRAMES
@@ -87,7 +88,7 @@ void APP_CAN_Process(void)
         {
             break;
         }
-        if ((frame.id == BSP_CAN_FILTER_ID0) && (frame.dlc == ALGO_CAN_DLC) && frame.is_extended && (!frame.is_remote))
+        if ((frame.id == BSP_CAN_FILTER_ID_SINOTRUK) && (frame.dlc == ALGO_CAN_DLC) && frame.is_extended && (!frame.is_remote))
         {
             algo_can_gcu1_t decoded;
             if (algo_can_decode_gcu1(frame.data, frame.dlc, &decoded))

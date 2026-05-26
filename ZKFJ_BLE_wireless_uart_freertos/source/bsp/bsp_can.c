@@ -12,11 +12,13 @@
 #include "bsp_ringBuff.h"
 #include "fsl_clock.h"
 #include "fsl_os_abstraction.h"
+#include "fsl_port.h"
 
 typedef struct
 {
     uint8_t mb_idx;
     flexcan_frame_t *frame;
+    flexcan_mb_transfer_t *xfer;
 } bsp_can_mb_map_t;
 
 static bsp_ringBuff_t s_rxRb;
@@ -29,7 +31,7 @@ static flexcan_mb_transfer_t s_rxXfer0;
 
 //接收缓冲区映射表
 static const bsp_can_mb_map_t s_mbMap[] = {
-    {BSP_CAN_RX_MB0, &s_rxFrame0},
+    {BSP_CAN_RX_MB0, &s_rxFrame0, &s_rxXfer0},
 };
 
 static bool bsp_can_rb_push_frame(const bsp_can_frame_t *frame)
@@ -99,15 +101,23 @@ static FLEXCAN_CALLBACK(bsp_can_rx_cb)
                 s_rxDropped++;
             }
 
-            (void)FLEXCAN_TransferReceiveNonBlocking(base, &s_flexcanHandle, &s_rxXfer0);
+            (void)FLEXCAN_TransferReceiveNonBlocking(base, &s_flexcanHandle, s_mbMap[i].xfer);
             break;
         }
     }
 }
 
+static void bsp_can_init_pins(void)
+{
+    CLOCK_EnableClock(kCLOCK_PortC);
+    PORT_SetPinMux(PORTC, 4U, kPORT_MuxAlt3);
+    PORT_SetPinMux(PORTC, 5U, kPORT_MuxAlt3);
+}
+
 void BSP_CAN_Init(void)
 {
     CLOCK_EnableClock(kCLOCK_Can0);
+    bsp_can_init_pins();
 
     BSP_RingBuff_Init(&s_rxRb, s_rxStorage, (uint32_t)sizeof(s_rxStorage));
     s_rxDropped = 0U;
@@ -131,18 +141,19 @@ void BSP_CAN_Init(void)
         return;
     }
     FLEXCAN_Init(BSP_CAN_BASE, &config, canClock);
+    (void)FLEXCAN_SetBitRate(BSP_CAN_BASE, canClock, BSP_CAN_BITRATE_BPS);
 
-    FLEXCAN_SetRxMbGlobalMask(BSP_CAN_BASE, FLEXCAN_RX_MB_EXT_MASK(0x1FFFFFFFU, 1U, 1U));
+    FLEXCAN_SetRxMbGlobalMask(BSP_CAN_BASE, FLEXCAN_RX_MB_EXT_MASK(BSP_CAN_FILTER_MASK_EXACT, 1U, 1U));
 
     const flexcan_rx_mb_config_t rxMbCfg0 = {
-        .id     = FLEXCAN_ID_EXT(BSP_CAN_FILTER_ID0),
+        .id     = FLEXCAN_ID_EXT(BSP_CAN_FILTER_ID_SINOTRUK),
         .format = kFLEXCAN_FrameFormatExtend,
         .type   = kFLEXCAN_FrameTypeData,
     };
 
     FLEXCAN_SetRxMbConfig(BSP_CAN_BASE, BSP_CAN_RX_MB0, &rxMbCfg0, true);
 
-    FLEXCAN_SetRxIndividualMask(BSP_CAN_BASE, BSP_CAN_RX_MB0, FLEXCAN_RX_MB_EXT_MASK(0x1FFFFFFFU, 1U, 1U));
+    FLEXCAN_SetRxIndividualMask(BSP_CAN_BASE, BSP_CAN_RX_MB0, FLEXCAN_RX_MB_EXT_MASK(BSP_CAN_FILTER_MASK_EXACT, 1U, 1U));
 
     FLEXCAN_TransferCreateHandle(BSP_CAN_BASE, &s_flexcanHandle, bsp_can_rx_cb, NULL);
 

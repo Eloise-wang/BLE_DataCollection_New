@@ -25,7 +25,7 @@ typedef uint16_t app_can_diag_t;
 #define APP_CAN_DIAG_CAPTURE_TIMEOUT  ((app_can_diag_t)0x0004U)
 #define APP_CAN_DIAG_RX_DROPPED       ((app_can_diag_t)0x0008U)
 
-#define APP_CAN_OFFLINE_TIMEOUT_MS        3000U
+#define APP_CAN_OFFLINE_TIMEOUT_MS        9000U
 #define APP_CAN_CAPTURE_DEFAULT_TIMEOUT_MS 1200U
 
 typedef enum
