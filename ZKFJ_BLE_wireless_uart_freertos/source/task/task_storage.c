@@ -4,12 +4,15 @@
 
 #include "app_global.h"
 #include "app_storage.h"
+#include "bsp_uart.h"
 #include "task.h"
 
 static bool s_storage_ready;
 static uint64_t s_storage_task_id;
 static uint32_t s_storage_task_gen;
 static TickType_t s_next_retry_tick;
+static TickType_t s_last_begin_log_tick;
+static bool s_logged_first_write;
 
 static bool task_storage_begin_if_needed(uint64_t task_id)
 {
@@ -20,6 +23,12 @@ static bool task_storage_begin_if_needed(uint64_t task_id)
 
     if (!APP_Storage_Init())
     {
+        const TickType_t now = xTaskGetTickCount();
+        if ((now - s_last_begin_log_tick) > pdMS_TO_TICKS(2000U))
+        {
+            s_last_begin_log_tick = now;
+            BSP_UART_Print("[STO] Init failed\r\n");
+        }
         return false;
     }
 
@@ -32,15 +41,26 @@ static bool task_storage_begin_if_needed(uint64_t task_id)
     meta.record_size        = (uint32_t)sizeof(sensor_record_t);
     meta.record_version     = 2U;
 
-    if (APP_Storage_BeginTask(task_id, &meta))
+    const app_storage_phase_t phase = TASK_IsPretest() ? APP_STORAGE_PHASE_PRETEST : APP_STORAGE_PHASE_FORMAL;
+    if (APP_Storage_BeginTaskEx(task_id, &meta, phase))
     {
         s_storage_ready = true;
         s_storage_task_gen = TASK_GetTaskGeneration();
+        s_logged_first_write = false;
         if (g_system_event_group != NULL)
         {
             (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
         }
         return true;
+    }
+    else
+    {
+        const TickType_t now = xTaskGetTickCount();
+        if ((now - s_last_begin_log_tick) > pdMS_TO_TICKS(2000U))
+        {
+            s_last_begin_log_tick = now;
+            BSP_UART_Print("[STO] BeginTask failed\r\n");
+        }
     }
     return false;
 }
@@ -102,7 +122,14 @@ void TASK_StorageTask(void *pvParameters)
         {
             if (s_storage_ready)
             {
-                (void)APP_Storage_AppendData(s_storage_task_id, &record, (uint32_t)sizeof(record));
+                const bool ok = TASK_IsPretest() ?
+                                    APP_Storage_AppendPreData(s_storage_task_id, &record, (uint32_t)sizeof(record)) :
+                                    APP_Storage_AppendData(s_storage_task_id, &record, (uint32_t)sizeof(record));
+                if (ok && (!s_logged_first_write))
+                {
+                    s_logged_first_write = true;
+                    BSP_UART_Print("[STO] First write ok\r\n");
+                }
             }
         }
     }

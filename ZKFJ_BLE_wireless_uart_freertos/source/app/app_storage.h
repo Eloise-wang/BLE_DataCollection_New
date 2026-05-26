@@ -32,15 +32,22 @@ typedef struct
     uint32_t record_version;         // 记录版本号
 } app_storage_task_meta_t;
 
+typedef enum
+{
+    APP_STORAGE_PHASE_PRETEST = 0,
+    APP_STORAGE_PHASE_FORMAL  = 1,
+} app_storage_phase_t;
 
 // 初始化存储
 bool APP_Storage_Init(void);
 // 开始任务
 bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta);
+bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *meta, app_storage_phase_t phase);
 
 
 // 追加写入数据
 bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t record_size);
+bool APP_Storage_AppendPreData(uint64_t task_id, const void *record, uint32_t record_size);
 // 追加写入日志
 bool APP_Storage_AppendLog(uint64_t task_id, const void *data, uint32_t size);
 bool APP_Storage_LogPrintf(uint64_t task_id, const char *format, ...);

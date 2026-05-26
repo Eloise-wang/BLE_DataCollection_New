@@ -85,6 +85,8 @@ bool TASK_StopCollect(uint64_t task_id);
 
 uint32_t TASK_GetTaskGeneration(void);
 
+bool TASK_IsPretest(void);
+
 uint32_t TASK_GetCollectPeriodMs(void);
 uint32_t TASK_GetCollectDurationS(void);
 uint32_t TASK_GetCollectTotalCount(void);

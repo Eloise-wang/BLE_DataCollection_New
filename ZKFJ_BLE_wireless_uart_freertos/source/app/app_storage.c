@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "bsp_fs.h"
+#include "bsp_uart.h"
 
 #define APP_STORAGE_DIR_MAX   32
 #define APP_STORAGE_PATH_MAX  64
@@ -19,7 +20,9 @@
 
 static void app_storage_task_dir(char out[APP_STORAGE_DIR_MAX], uint64_t task_id)
 {
-    (void)snprintf(out, APP_STORAGE_DIR_MAX, "task_%016llX", (unsigned long long)task_id);
+    const uint32_t hi = (uint32_t)(task_id >> 32);
+    const uint32_t lo = (uint32_t)(task_id & 0xFFFFFFFFu);
+    (void)snprintf(out, APP_STORAGE_DIR_MAX, "task_%08X%08X", (unsigned)hi, (unsigned)lo);
 }
 
 static void app_storage_task_path(char out[APP_STORAGE_PATH_MAX], uint64_t task_id, const char *file)
@@ -36,36 +39,59 @@ bool APP_Storage_Init(void)
 
 bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta)
 {
+    return APP_Storage_BeginTaskEx(task_id, meta, APP_STORAGE_PHASE_FORMAL);
+}
+
+bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *meta, app_storage_phase_t phase)
+{
     char dir[APP_STORAGE_DIR_MAX];
     char metaPath[APP_STORAGE_PATH_MAX];
     char dataPath[APP_STORAGE_PATH_MAX];
+    char preDataPath[APP_STORAGE_PATH_MAX];
     char logPath[APP_STORAGE_PATH_MAX];
 
     if (!BSP_FS_IsMounted())
     {
+        BSP_UART_Print("[STO] BeginTask: FS not mounted\r\n");
         return false;
     }
 
     app_storage_task_dir(dir, task_id);
-    if (BSP_FS_Mkdir(dir) != 0)
+    const int mkerr = BSP_FS_Mkdir(dir);
+    if (mkerr != 0)
     {
+        BSP_UART_Print("[STO] BeginTask: mkdir failed: %s err=%d\r\n", dir, mkerr);
         return false;
     }
 
-    app_storage_task_path(dataPath, task_id, "data.bin");
-    (void)BSP_FS_Remove(dataPath);
+    if (phase == APP_STORAGE_PHASE_PRETEST)
+    {
+        app_storage_task_path(preDataPath, task_id, "pre_data.bin");
+        (void)BSP_FS_Remove(preDataPath);
+    }
+    else
+    {
+        app_storage_task_path(dataPath, task_id, "data.bin");
+        (void)BSP_FS_Remove(dataPath);
+    }
+
     app_storage_task_path(logPath, task_id, "sys.log");
     (void)BSP_FS_Remove(logPath);
 
     if (meta != NULL)
     {
         app_storage_task_path(metaPath, task_id, "meta.bin");
-        if (BSP_FS_FileWriteTruncate(metaPath, meta, (uint32_t)sizeof(*meta)) != 0)
+        const int werr = BSP_FS_FileWriteTruncate(metaPath, meta, (uint32_t)sizeof(*meta));
+        if (werr != 0)
         {
+            BSP_UART_Print("[STO] BeginTask: write meta failed: %s err=%d\r\n", metaPath, werr);
             return false;
         }
     }
 
+    BSP_UART_Print("[STO] BeginTask ok(%s): %s\r\n",
+                   (phase == APP_STORAGE_PHASE_PRETEST) ? "pre" : "formal",
+                   dir);
     return true;
 }
 
@@ -79,7 +105,32 @@ bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t recor
     }
 
     app_storage_task_path(dataPath, task_id, "data.bin");
-    return (BSP_FS_FileAppend(dataPath, record, record_size) == 0);
+    const int err = BSP_FS_FileAppend(dataPath, record, record_size);
+    if (err != 0)
+    {
+        BSP_UART_Print("[STO] AppendData failed: %s size=%u err=%d\r\n", dataPath, (unsigned)record_size, err);
+        return false;
+    }
+    return true;
+}
+
+bool APP_Storage_AppendPreData(uint64_t task_id, const void *record, uint32_t record_size)
+{
+    char dataPath[APP_STORAGE_PATH_MAX];
+
+    if ((record == NULL) || (record_size == 0U) || (!BSP_FS_IsMounted()))
+    {
+        return false;
+    }
+
+    app_storage_task_path(dataPath, task_id, "pre_data.bin");
+    const int err = BSP_FS_FileAppend(dataPath, record, record_size);
+    if (err != 0)
+    {
+        BSP_UART_Print("[STO] AppendPreData failed: %s size=%u err=%d\r\n", dataPath, (unsigned)record_size, err);
+        return false;
+    }
+    return true;
 }
 
 bool APP_Storage_AppendLog(uint64_t task_id, const void *data, uint32_t size)
@@ -192,6 +243,8 @@ bool APP_Storage_DeleteTask(uint64_t task_id)
     }
 
     app_storage_task_path(p, task_id, "data.bin");
+    (void)BSP_FS_Remove(p);
+    app_storage_task_path(p, task_id, "pre_data.bin");
     (void)BSP_FS_Remove(p);
     app_storage_task_path(p, task_id, "sys.log");
     (void)BSP_FS_Remove(p);

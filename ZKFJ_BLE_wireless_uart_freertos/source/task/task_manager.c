@@ -22,6 +22,7 @@ typedef struct
     uint32_t total_count;
     uint32_t remaining_count;
     bool time_valid;
+    bool is_pretest;
 } task_collect_plan_t;
 
 static task_collect_plan_t s_collect;
@@ -142,6 +143,7 @@ void TASK_StartCollect(uint64_t task_id,
     s_collect.total_count     = total_count;
     s_collect.remaining_count = total_count;
     s_collect.time_valid      = time_valid;
+    s_collect.is_pretest      = !time_valid;
     taskEXIT_CRITICAL();
 
     (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_COLLECT_DONE);
@@ -154,6 +156,15 @@ void TASK_StartCollect(uint64_t task_id,
     {
         (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_COLLECT_RUNNING);
     }
+}
+
+bool TASK_IsPretest(void)
+{
+    bool v;
+    taskENTER_CRITICAL();
+    v = s_collect.is_pretest;
+    taskEXIT_CRITICAL();
+    return v;
 }
 
 bool TASK_StopCollect(uint64_t task_id)
