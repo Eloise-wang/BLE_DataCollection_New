@@ -34,80 +34,13 @@ static proto_parser_t s_parser;
 static proto_tx_fn_t s_tx_fn;
 static void *s_tx_user;
 static SemaphoreHandle_t s_tx_mutex;
-static bool s_tx_is_uart;
 static bool s_ble_connected;
-
-static uint8_t s_uart_hex_buf[512];
-static size_t s_uart_hex_len;
-
-static void proto_tx_uart(const uint8_t *data, size_t len, void *user)
-{
-    (void)user;
-    if ((data == NULL) || (len == 0U))
-    {
-        return;
-    }
-    (void)BSP_UART_Write(data, (uint32_t)len);
-}
-
-static int proto_hex_nibble(uint8_t c)
-{
-    if ((c >= (uint8_t)'0') && (c <= (uint8_t)'9'))
-    {
-        return (int)(c - (uint8_t)'0');
-    }
-    if ((c >= (uint8_t)'a') && (c <= (uint8_t)'f'))
-    {
-        return 10 + (int)(c - (uint8_t)'a');
-    }
-    if ((c >= (uint8_t)'A') && (c <= (uint8_t)'F'))
-    {
-        return 10 + (int)(c - (uint8_t)'A');
-    }
-    return -1;
-}
-
-static void proto_uart_hex_flush(void)
-{
-    uint8_t decoded[256];
-    size_t dec_len = 0U;
-    int hi = -1;
-
-    for (size_t i = 0U; i < s_uart_hex_len; i++)
-    {
-        const int n = proto_hex_nibble(s_uart_hex_buf[i]);
-        if (n < 0)
-        {
-            continue;
-        }
-        if (hi < 0)
-        {
-            hi = n;
-        }
-        else
-        {
-            decoded[dec_len++] = (uint8_t)(((uint8_t)hi << 4) | (uint8_t)n);
-            hi = -1;
-            if (dec_len >= sizeof(decoded))
-            {
-                break;
-            }
-        }
-    }
-
-    if (dec_len != 0U)
-    {
-        PROTO_OnRxBytes(decoded, dec_len);
-    }
-
-    s_uart_hex_len = 0U;
-}
 
 static void proto_send(const uint8_t *data, size_t len)
 {
     if (s_tx_fn != NULL)
     {
-        if ((!s_tx_is_uart) && (!s_ble_connected))
+        if (!s_ble_connected)
         {
             return;
         }
@@ -180,19 +113,12 @@ void PROTO_CmdInit(void)
     {
         s_tx_mutex = xSemaphoreCreateMutex();
     }
-
-    if (s_tx_fn == NULL)
-    {
-        BSP_UART_Init();
-        PROTO_CmdSetTx(proto_tx_uart, NULL);
-    }
 }
 
 void PROTO_CmdSetTx(proto_tx_fn_t fn, void *user)
 {
     s_tx_fn = fn;
     s_tx_user = user;
-    s_tx_is_uart = (fn == proto_tx_uart);
 }
 
 void PROTO_SetBleConnected(bool connected)
@@ -200,16 +126,6 @@ void PROTO_SetBleConnected(bool connected)
     const bool was_connected = s_ble_connected;
     s_ble_connected = connected;
     TASK_SetBleConnected(connected);
-    if (was_connected && (!connected))
-    {
-        const uint64_t task_id = TASK_GetActiveTaskId();
-        (void)APP_Storage_LogPrintf(task_id, "[BLE] disconnected\n");
-    }
-    else if ((!was_connected) && connected)
-    {
-        const uint64_t task_id = TASK_GetActiveTaskId();
-        (void)APP_Storage_LogPrintf(task_id, "[BLE] connected\n");
-    }
 }
 
 void PROTO_TxRaw(const uint8_t *data, size_t len)
@@ -412,6 +328,12 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
         return;
     }
 
+    if (!APP_Storage_Init())
+    {
+        proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+        return;
+    }
+
     uint32_t total_bytes = 0U;
     const uint8_t file_sel = (msg->len >= (uint8_t)(8U + 4U + 2U + 1U)) ? msg->payload[14] : 0U;
     if (file_sel == 0U)
@@ -471,7 +393,7 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
 
     while (offset < total_bytes)
     {
-        if ((!s_tx_is_uart) && (!s_ble_connected))
+        if (!s_ble_connected)
         {
             break;
         }
@@ -516,44 +438,6 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
     }
 
     TASK_SetHistorySending(false);
-}
-
-void PROTO_UartRxTask(void *pvParameters)
-{
-    (void)pvParameters;
-
-    PROTO_CmdInit();
-
-    for (;;)
-    {
-        uint8_t buf[64];
-        uint32_t n = 0U;
-
-        if (BSP_UART_TryRead(buf, sizeof(buf), &n) && (n != 0U))
-        {
-            for (uint32_t i = 0U; i < n; i++)
-            {
-                const uint8_t c = buf[i];
-                if (c == (uint8_t)'\n')
-                {
-                    proto_uart_hex_flush();
-                }
-                else if (c != (uint8_t)'\r')
-                {
-                    if (s_uart_hex_len < sizeof(s_uart_hex_buf))
-                    {
-                        s_uart_hex_buf[s_uart_hex_len++] = c;
-                    }
-                    else
-                    {
-                        s_uart_hex_len = 0U;
-                    }
-                }
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10U));
-    }
 }
 
 void PROTO_CmdTask(void *pvParameters)

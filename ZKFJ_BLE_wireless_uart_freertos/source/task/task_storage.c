@@ -204,11 +204,20 @@ void TASK_StorageTask(void *pvParameters)
             continue;
         }
 
+        const bool collecting = TASK_GetCollectEnabled();
+        const UBaseType_t pending = uxQueueMessagesWaiting(g_sensor_data_queue);
+        const bool need_storage_session = collecting || (pending > 0U);
+
         const uint64_t active_task_id = TASK_GetActiveTaskId();
         const uint32_t active_gen = TASK_GetTaskGeneration();
         const TickType_t now = xTaskGetTickCount();
         if (!s_storage_ready)
         {
+            if (!need_storage_session)
+            {
+                vTaskDelay(pdMS_TO_TICKS(100U));
+                continue;
+            }
             if (now < s_next_retry_tick)
             {
                 vTaskDelay(pdMS_TO_TICKS(50U));
@@ -231,7 +240,10 @@ void TASK_StorageTask(void *pvParameters)
             }
             (void)xQueueReset(g_sensor_data_queue);
             s_storage_task_id = active_task_id;
-            (void)task_storage_begin_if_needed(s_storage_task_id);
+            if (need_storage_session)
+            {
+                (void)task_storage_begin_if_needed(s_storage_task_id);
+            }
         }
         else if ((active_task_id != s_storage_task_id) && (uxQueueMessagesWaiting(g_sensor_data_queue) == 0U))
         {
@@ -241,7 +253,10 @@ void TASK_StorageTask(void *pvParameters)
                 (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
             }
             s_storage_task_id = active_task_id;
-            (void)task_storage_begin_if_needed(s_storage_task_id);
+            if (need_storage_session)
+            {
+                (void)task_storage_begin_if_needed(s_storage_task_id);
+            }
         }
 
         sensor_record_t record;

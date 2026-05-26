@@ -58,7 +58,6 @@ void TASK_CreateAllTasks(void)
 {
     (void)xTaskCreate(TASK_WatchdogTask, "Task_Wdog", TASK_STACK_WDOG, NULL, 5U, NULL);
     (void)xTaskCreate(PROTO_CmdTask, "Task_Proto", TASK_STACK_PROTO, NULL, 4U, NULL);
-    (void)xTaskCreate(PROTO_UartRxTask, "Task_UartCmd", TASK_STACK_UART_CMD, NULL, 4U, NULL);
     (void)xTaskCreate(TASK_SensorCollectTask, "Task_Sensor", TASK_STACK_SENSOR, NULL, 3U, NULL);
     (void)xTaskCreate(TASK_StorageTask, "Task_Storage", TASK_STACK_STORAGE, NULL, 2U, NULL);
     (void)xTaskCreate(TASK_LedTask, "Task_Led", TASK_STACK_LED, NULL, 1U, NULL);

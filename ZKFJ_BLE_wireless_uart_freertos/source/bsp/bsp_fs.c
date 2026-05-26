@@ -58,7 +58,7 @@ static lpspi_memory_config_t s_memCfg = {
 };
 
 #ifndef BSP_FS_LOG_ENABLE
-#define BSP_FS_LOG_ENABLE 1
+#define BSP_FS_LOG_ENABLE 0
 #endif
 
 #ifndef BSP_FS_BLOCK_COUNT_OVERRIDE
@@ -186,6 +186,7 @@ static void bsp_fs_flash_recover(LPSPI_Type *base)
     (void)bsp_fs_spi_cmd_only(base, &cmd_rst, 1U);
 }
 
+#if BSP_FS_LOG_ENABLE
 static void bsp_fs_log_flash_regs(LPSPI_Type *base, const char *tag)
 {
     if ((base == NULL) || (tag == NULL))
@@ -237,6 +238,13 @@ static void bsp_fs_log_flash_regs(LPSPI_Type *base, const char *tag)
         bsp_fs_log("%s sr3=0x%02X", tag, (unsigned)sr3);
     }
 }
+#else
+static void bsp_fs_log_flash_regs(LPSPI_Type *base, const char *tag)
+{
+    (void)base;
+    (void)tag;
+}
+#endif
 
 static status_t bsp_fs_prepare_flash_io_locked(void)
 {
@@ -960,6 +968,20 @@ int BSP_FS_FileAppend(const char *path, const void *data, uint32_t size)
 
     lfs_file_t f;
     int err = lfs_file_open(&s_lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_APPEND);
+    if (err == LFS_ERR_CORRUPT)
+    {
+        bsp_fs_log("FileAppend got CORRUPT, try repair");
+        const int rerr = bsp_fs_repair_on_corrupt_locked();
+        bsp_fs_log("Repair result: err=%d,%s", rerr, bsp_fs_lfs_err_str(rerr));
+        if (rerr == 0)
+        {
+            err = lfs_file_open(&s_lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_APPEND);
+        }
+        else
+        {
+            s_mounted = false;
+        }
+    }
     if (err == 0)
     {
         const lfs_ssize_t w = lfs_file_write(&s_lfs, &f, data, (lfs_size_t)size);
@@ -990,6 +1012,20 @@ int BSP_FS_FileWriteTruncate(const char *path, const void *data, uint32_t size)
 
     lfs_file_t f;
     int err = lfs_file_open(&s_lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
+    if (err == LFS_ERR_CORRUPT)
+    {
+        bsp_fs_log("FileWriteTruncate got CORRUPT, try repair");
+        const int rerr = bsp_fs_repair_on_corrupt_locked();
+        bsp_fs_log("Repair result: err=%d,%s", rerr, bsp_fs_lfs_err_str(rerr));
+        if (rerr == 0)
+        {
+            err = lfs_file_open(&s_lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
+        }
+        else
+        {
+            s_mounted = false;
+        }
+    }
     if (err == 0)
     {
         const lfs_ssize_t w = lfs_file_write(&s_lfs, &f, data, (lfs_size_t)size);
@@ -1020,6 +1056,20 @@ int BSP_FS_FileReadAt(const char *path, uint32_t offset, void *out, uint32_t siz
 
     lfs_file_t f;
     int err = lfs_file_open(&s_lfs, &f, path, LFS_O_RDONLY);
+    if (err == LFS_ERR_CORRUPT)
+    {
+        bsp_fs_log("FileReadAt got CORRUPT, try repair");
+        const int rerr = bsp_fs_repair_on_corrupt_locked();
+        bsp_fs_log("Repair result: err=%d,%s", rerr, bsp_fs_lfs_err_str(rerr));
+        if (rerr == 0)
+        {
+            err = lfs_file_open(&s_lfs, &f, path, LFS_O_RDONLY);
+        }
+        else
+        {
+            s_mounted = false;
+        }
+    }
     if (err == 0)
     {
         const lfs_soff_t s = lfs_file_seek(&s_lfs, &f, (lfs_soff_t)offset, LFS_SEEK_SET);
@@ -1055,6 +1105,20 @@ int BSP_FS_FileSize(const char *path, uint32_t *out_size)
 
     lfs_file_t f;
     int err = lfs_file_open(&s_lfs, &f, path, LFS_O_RDONLY);
+    if (err == LFS_ERR_CORRUPT)
+    {
+        bsp_fs_log("FileSize got CORRUPT, try repair");
+        const int rerr = bsp_fs_repair_on_corrupt_locked();
+        bsp_fs_log("Repair result: err=%d,%s", rerr, bsp_fs_lfs_err_str(rerr));
+        if (rerr == 0)
+        {
+            err = lfs_file_open(&s_lfs, &f, path, LFS_O_RDONLY);
+        }
+        else
+        {
+            s_mounted = false;
+        }
+    }
     if (err == 0)
     {
         const lfs_soff_t s = lfs_file_size(&s_lfs, &f);

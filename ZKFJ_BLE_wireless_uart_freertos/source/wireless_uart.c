@@ -241,7 +241,6 @@ static TIMER_MANAGER_HANDLE_DEFINE(mStatusReportTimerId);
 
 
 static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user);
-static void BleApp_ProtoTxUart(const uint8_t *data, size_t len, void *user);
 
 /* If the board has only one button, multiplex the required functionalities on it using an application timer */
 #if (gAppButtonCnt_c == 1)
@@ -755,7 +754,6 @@ static void BleApp_ConnectionCallback
                 (void)TM_Stop((timer_handle_t)mBatteryMeasurementTimerId);
                 (void)TM_Stop((timer_handle_t)mStatusReportTimerId);
                 PROTO_SetBleConnected(false);
-                PROTO_CmdSetTx(BleApp_ProtoTxUart, NULL);
             }
             /* recalculate minimum of maximum MTU's of all connected devices */
             mAppUartBufferSize                       = mAppUartBufferSize_c;
@@ -1514,16 +1512,6 @@ static void StatusReportTimerCallback
     PROTO_SendStatusNow();
 }
 
-static void BleApp_ProtoTxUart(const uint8_t *data, size_t len, void *user)
-{
-    (void)user;
-    if ((data == NULL) || (len == 0U))
-    {
-        return;
-    }
-    (void)BSP_UART_Write(data, (uint32_t)len);
-}
-
 static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user)
 {
     (void)user;
@@ -1914,7 +1902,6 @@ static void BluetoothLEHost_Initialized(void)
     (void)Bas_Start(&mBasServiceConfig);
 
     BSP_UART_Init();
-    PROTO_CmdSetTx(BleApp_ProtoTxUart, NULL);
     PROTO_SetBleConnected(false);
 
     /* Allocate application timer */

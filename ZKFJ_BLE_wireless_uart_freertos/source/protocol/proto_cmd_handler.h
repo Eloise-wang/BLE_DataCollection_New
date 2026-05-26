@@ -29,7 +29,6 @@ void PROTO_SendStatusNow(void);
 bool PROTO_SendRealtimeRecord(uint64_t task_id, const void *record, uint16_t record_size, uint32_t seq);
 
 void PROTO_CmdTask(void *pvParameters);
-void PROTO_UartRxTask(void *pvParameters);
 
 #ifdef __cplusplus
 }
