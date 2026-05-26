@@ -197,8 +197,19 @@ void PROTO_CmdSetTx(proto_tx_fn_t fn, void *user)
 
 void PROTO_SetBleConnected(bool connected)
 {
+    const bool was_connected = s_ble_connected;
     s_ble_connected = connected;
     TASK_SetBleConnected(connected);
+    if (was_connected && (!connected))
+    {
+        const uint64_t task_id = TASK_GetActiveTaskId();
+        (void)APP_Storage_LogPrintf(task_id, "[BLE] disconnected\n");
+    }
+    else if ((!was_connected) && connected)
+    {
+        const uint64_t task_id = TASK_GetActiveTaskId();
+        (void)APP_Storage_LogPrintf(task_id, "[BLE] connected\n");
+    }
 }
 
 void PROTO_TxRaw(const uint8_t *data, size_t len)
@@ -402,9 +413,42 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
     }
 
     uint32_t total_bytes = 0U;
-    if (!APP_Storage_GetDataSize(task_id, &total_bytes))
+    const uint8_t file_sel = (msg->len >= (uint8_t)(8U + 4U + 2U + 1U)) ? msg->payload[14] : 0U;
+    if (file_sel == 0U)
     {
-        proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+        if (!APP_Storage_GetDataSize(task_id, &total_bytes))
+        {
+            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+            return;
+        }
+    }
+    else if (file_sel == 1U)
+    {
+        if (!APP_Storage_GetPreDataSize(task_id, &total_bytes))
+        {
+            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+            return;
+        }
+    }
+    else if (file_sel == 2U)
+    {
+        if (!APP_Storage_GetMetaSize(task_id, &total_bytes))
+        {
+            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+            return;
+        }
+    }
+    else if (file_sel == 3U)
+    {
+        if (!APP_Storage_GetLogSize(task_id, &total_bytes))
+        {
+            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+            return;
+        }
+    }
+    else
+    {
+        proto_send_ack(msg->cmd, PROTO_STATUS_PARAM_ERROR);
         return;
     }
 
@@ -438,7 +482,23 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
             to_read = (uint16_t)(total_bytes - offset);
         }
 
-        const int nread = APP_Storage_ReadData(task_id, offset, data_buf, (uint32_t)to_read);
+        int nread = -1;
+        if (file_sel == 0U)
+        {
+            nread = APP_Storage_ReadData(task_id, offset, data_buf, (uint32_t)to_read);
+        }
+        else if (file_sel == 1U)
+        {
+            nread = APP_Storage_ReadPreData(task_id, offset, data_buf, (uint32_t)to_read);
+        }
+        else if (file_sel == 2U)
+        {
+            nread = APP_Storage_ReadMeta(task_id, offset, data_buf, (uint32_t)to_read);
+        }
+        else
+        {
+            nread = APP_Storage_ReadLog(task_id, offset, data_buf, (uint32_t)to_read);
+        }
         if (nread <= 0)
         {
             break;

@@ -219,6 +219,32 @@ int APP_Storage_ReadData(uint64_t task_id, uint32_t offset, void *out, uint32_t 
     return BSP_FS_FileReadAt(dataPath, offset, out, size);
 }
 
+int APP_Storage_ReadPreData(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
+{
+    char dataPath[APP_STORAGE_PATH_MAX];
+
+    if ((out == NULL) || (size == 0U) || (!BSP_FS_IsMounted()))
+    {
+        return -1;
+    }
+
+    app_storage_task_path(dataPath, task_id, "pre_data.bin");
+    return BSP_FS_FileReadAt(dataPath, offset, out, size);
+}
+
+int APP_Storage_ReadMeta(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
+{
+    char metaPath[APP_STORAGE_PATH_MAX];
+
+    if ((out == NULL) || (size == 0U) || (!BSP_FS_IsMounted()))
+    {
+        return -1;
+    }
+
+    app_storage_task_path(metaPath, task_id, "meta.bin");
+    return BSP_FS_FileReadAt(metaPath, offset, out, size);
+}
+
 bool APP_Storage_GetDataSize(uint64_t task_id, uint32_t *out_size)
 {
     char dataPath[APP_STORAGE_PATH_MAX];
@@ -230,6 +256,32 @@ bool APP_Storage_GetDataSize(uint64_t task_id, uint32_t *out_size)
 
     app_storage_task_path(dataPath, task_id, "data.bin");
     return (BSP_FS_FileSize(dataPath, out_size) == 0);
+}
+
+bool APP_Storage_GetPreDataSize(uint64_t task_id, uint32_t *out_size)
+{
+    char dataPath[APP_STORAGE_PATH_MAX];
+
+    if ((out_size == NULL) || (!BSP_FS_IsMounted()))
+    {
+        return false;
+    }
+
+    app_storage_task_path(dataPath, task_id, "pre_data.bin");
+    return (BSP_FS_FileSize(dataPath, out_size) == 0);
+}
+
+bool APP_Storage_GetMetaSize(uint64_t task_id, uint32_t *out_size)
+{
+    char metaPath[APP_STORAGE_PATH_MAX];
+
+    if ((out_size == NULL) || (!BSP_FS_IsMounted()))
+    {
+        return false;
+    }
+
+    app_storage_task_path(metaPath, task_id, "meta.bin");
+    return (BSP_FS_FileSize(metaPath, out_size) == 0);
 }
 
 bool APP_Storage_DeleteTask(uint64_t task_id)

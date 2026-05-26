@@ -43,6 +43,11 @@ static uint8_t s_readCache[256U];
 static uint8_t s_progCache[256U];
 static uint8_t s_lookahead[64U];
 static uint8_t s_eraseVerifyBuf[32U];
+static uint8_t s_progVerifyBuf[256U];
+
+#ifndef BSP_FS_IO_VERIFY_ENABLE
+#define BSP_FS_IO_VERIFY_ENABLE 1
+#endif
 
 static nor_config_t s_norCfg;
 static nor_handle_t s_norHandle;
@@ -58,6 +63,14 @@ static lpspi_memory_config_t s_memCfg = {
 
 #ifndef BSP_FS_BLOCK_COUNT_OVERRIDE
 #define BSP_FS_BLOCK_COUNT_OVERRIDE 0U
+#endif
+
+#ifndef BSP_FS_AUTO_FORMAT_ON_CORRUPT
+#define BSP_FS_AUTO_FORMAT_ON_CORRUPT 0
+#endif
+
+#ifndef BSP_FS_AUTO_FORMAT_ON_MOUNT_FAIL
+#define BSP_FS_AUTO_FORMAT_ON_MOUNT_FAIL 0
 #endif
 
 #if BSP_FS_LOG_ENABLE
@@ -225,6 +238,48 @@ static void bsp_fs_log_flash_regs(LPSPI_Type *base, const char *tag)
     }
 }
 
+static status_t bsp_fs_prepare_flash_io_locked(void)
+{
+    BOARD_InitExtFlashPins();
+
+    CLOCK_EnableClock(kCLOCK_Lpspi1);
+    CLOCK_SetIpSrc(kCLOCK_Lpspi1, kCLOCK_IpSrcFro192M);
+    CLOCK_SetIpSrcDiv(kCLOCK_Lpspi1, kSCG_SysClkDivBy1);
+    CLOCK_EnableClockLPMode(kCLOCK_Lpspi1, kCLOCK_IpClkControl_fun1);
+
+    bsp_fs_flash_recover(LPSPI1);
+
+    s_norCfg.memControlConfig = &s_memCfg;
+    s_norCfg.driverBaseAddr   = NULL;
+    const status_t st = Nor_Flash_Init(&s_norCfg, &s_norHandle);
+    bsp_fs_log("Nor_Flash_Init(re) status=%d", (int)st);
+    if (st == kStatus_Success)
+    {
+        if (s_norHandle.bytesInPageSize != 0U)
+        {
+            s_memCfg.bytesInPageSize = s_norHandle.bytesInPageSize;
+        }
+        if (s_norHandle.bytesInSectorSize != 0U)
+        {
+            s_memCfg.bytesInSectorSize = s_norHandle.bytesInSectorSize;
+        }
+        if (s_norHandle.bytesInMemorySize != 0U)
+        {
+            s_memCfg.bytesInMemorySize = s_norHandle.bytesInMemorySize;
+        }
+
+        if (s_lfsCfg.block_size != 0U)
+        {
+            s_ctx.nor = &s_norHandle;
+            s_lfsCfg.prog_size  = s_memCfg.bytesInPageSize;
+            s_lfsCfg.block_size = s_memCfg.bytesInSectorSize;
+            s_lfsCfg.cache_size = s_memCfg.bytesInPageSize;
+        }
+    }
+
+    return st;
+}
+
 static uint32_t bsp_fs_get_fs_size(void)
 {
     if (s_memCfg.bytesInSectorSize == 0U)
@@ -264,7 +319,14 @@ static int bsp_fs_lock(uint32_t timeout_ms)
 {
     if (!s_mutexCreated)
     {
-        return 0;
+        if (KOSA_StatusSuccess == OSA_MutexCreate((osa_mutex_handle_t)s_fsMutexHandle))
+        {
+            s_mutexCreated = true;
+        }
+        else
+        {
+            return -1;
+        }
     }
     return (OSA_MutexLock((osa_mutex_handle_t)s_fsMutexHandle, timeout_ms) == KOSA_StatusSuccess) ? 0 : -1;
 }
@@ -276,6 +338,8 @@ static void bsp_fs_unlock(void)
         (void)OSA_MutexUnlock((osa_mutex_handle_t)s_fsMutexHandle);
     }
 }
+
+static int bsp_fs_verify_erased_sector(uint32_t addr, uint32_t sectorSize);
 
 static int bsp_lfs_read(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, void *buffer, lfs_size_t size)
 {
@@ -302,6 +366,22 @@ static int bsp_lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t
                    (int)st, (unsigned)addr, (unsigned)block, (unsigned)off, (unsigned)size);
         return LFS_ERR_IO;
     }
+
+#if BSP_FS_IO_VERIFY_ENABLE
+    if ((size <= (lfs_size_t)sizeof(s_progVerifyBuf)) && (buffer != NULL))
+    {
+        if (Nor_Flash_Read(ctx->nor, addr, s_progVerifyBuf, (uint32_t)size) != kStatus_Success)
+        {
+            bsp_fs_log("IO prog verify read failed: addr=0x%08X size=%u", (unsigned)addr, (unsigned)size);
+            return LFS_ERR_IO;
+        }
+        if (memcmp(s_progVerifyBuf, buffer, (size_t)size) != 0)
+        {
+            bsp_fs_log("IO prog verify mismatch: addr=0x%08X size=%u", (unsigned)addr, (unsigned)size);
+            return LFS_ERR_IO;
+        }
+    }
+#endif
     return 0;
 }
 
@@ -315,6 +395,13 @@ static int bsp_lfs_erase(const struct lfs_config *c, lfs_block_t block)
         bsp_fs_log("IO erase failed: st=%d addr=0x%08X block=%u", (int)st, (unsigned)addr, (unsigned)block);
         return LFS_ERR_IO;
     }
+#if BSP_FS_IO_VERIFY_ENABLE
+    if (bsp_fs_verify_erased_sector(addr, c->block_size) != 0)
+    {
+        bsp_fs_log("IO erase verify failed: addr=0x%08X block=%u", (unsigned)addr, (unsigned)block);
+        return LFS_ERR_IO;
+    }
+#endif
     return 0;
 }
 
@@ -381,6 +468,8 @@ static int bsp_fs_mkconsistent_locked(void)
 
 static int bsp_fs_mount_with_repair_locked(void)
 {
+    (void)bsp_fs_prepare_flash_io_locked();
+
     int err = lfs_mount(&s_lfs, &s_lfsCfg);
     if (err == 0)
     {
@@ -397,7 +486,8 @@ static int bsp_fs_mount_with_repair_locked(void)
         bsp_fs_log("lfs_mount failed: err=%d,%s", err, bsp_fs_lfs_err_str(err));
     }
 
-    bsp_fs_log("try format due to err=%d,%s", err, bsp_fs_lfs_err_str(err));
+#if BSP_FS_AUTO_FORMAT_ON_MOUNT_FAIL
+    bsp_fs_log("try format due to err=%d,%s (AUTO_FORMAT_ON_MOUNT_FAIL=1)", err, bsp_fs_lfs_err_str(err));
     {
         bsp_fs_log_flash_regs((LPSPI_Type *)s_norHandle.driverBaseAddr, "before_erase");
         const uint32_t fsSize = bsp_fs_get_effective_fs_size_bytes();
@@ -448,19 +538,32 @@ static int bsp_fs_mount_with_repair_locked(void)
         }
     }
     return err;
+#else
+    return err;
+#endif
 }
 
 static int bsp_fs_repair_on_corrupt_locked(void)
 {
+    (void)bsp_fs_prepare_flash_io_locked();
+
     const int cerr = bsp_fs_mkconsistent_locked();
-    if (cerr == 0)
-    {
-        return 0;
-    }
+    bsp_fs_log("mkconsistent result: err=%d,%s", cerr, bsp_fs_lfs_err_str(cerr));
 
     const int uerr = lfs_unmount(&s_lfs);
-    bsp_fs_log("lfs_unmount before format: err=%d,%s", uerr, bsp_fs_lfs_err_str(uerr));
+    bsp_fs_log("lfs_unmount for remount: err=%d,%s", uerr, bsp_fs_lfs_err_str(uerr));
 
+    int merr = lfs_mount(&s_lfs, &s_lfsCfg);
+    bsp_fs_log("lfs_mount after remount: err=%d,%s", merr, bsp_fs_lfs_err_str(merr));
+    if (merr == 0)
+    {
+        const int cerr2 = bsp_fs_mkconsistent_locked();
+        bsp_fs_log("mkconsistent after remount: err=%d,%s", cerr2, bsp_fs_lfs_err_str(cerr2));
+        return cerr2;
+    }
+
+#if BSP_FS_AUTO_FORMAT_ON_CORRUPT
+    bsp_fs_log("remount failed, try format (AUTO_FORMAT_ON_CORRUPT=1)");
     const uint32_t fsSize = bsp_fs_get_effective_fs_size_bytes();
     const uint32_t sector = s_memCfg.bytesInSectorSize;
     if ((fsSize != 0U) && (sector != 0U))
@@ -500,7 +603,7 @@ static int bsp_fs_repair_on_corrupt_locked(void)
         return ferr;
     }
 
-    const int merr = lfs_mount(&s_lfs, &s_lfsCfg);
+    merr = lfs_mount(&s_lfs, &s_lfsCfg);
     bsp_fs_log("lfs_mount after format: err=%d,%s", merr, bsp_fs_lfs_err_str(merr));
     if (merr != 0)
     {
@@ -508,6 +611,9 @@ static int bsp_fs_repair_on_corrupt_locked(void)
     }
 
     return bsp_fs_mkconsistent_locked();
+#else
+    return merr;
+#endif
 }
 
 bool BSP_FS_Init(void)
@@ -594,7 +700,11 @@ bool BSP_FS_Init(void)
                (unsigned)bsp_fs_get_fs_size(),
                (unsigned)bsp_fs_get_crashlog_base());
 
-    bsp_fs_log_flash_regs((LPSPI_Type *)s_norHandle.driverBaseAddr, "flash");
+    if (bsp_fs_lock(5000U) == 0)
+    {
+        bsp_fs_log_flash_regs((LPSPI_Type *)s_norHandle.driverBaseAddr, "flash");
+        bsp_fs_unlock();
+    }
 
     (void)memset(&s_lfs, 0, sizeof(s_lfs));
     (void)memset(&s_lfsCfg, 0, sizeof(s_lfsCfg));
@@ -984,8 +1094,17 @@ bool BSP_FS_CrashLog_Erase(void)
         return false;
     }
 
+    if (bsp_fs_lock(5000U) != 0)
+    {
+        bsp_fs_log("CrashLog_Erase lock failed");
+        return false;
+    }
+    BOARD_InitExtFlashPins();
+    bsp_fs_flash_recover((LPSPI_Type *)s_norHandle.driverBaseAddr);
+
     const uint32_t addr = bsp_fs_get_crashlog_base();
     const status_t st = Nor_Flash_Erase_Sector(&s_norHandle, addr);
+    bsp_fs_unlock();
     bsp_fs_log("CrashLog_Erase: addr=0x%08X status=%d", (unsigned)addr, (int)st);
     return (st == kStatus_Success);
 }
@@ -1013,15 +1132,25 @@ bool BSP_FS_CrashLog_Write(const void *data, uint32_t size)
         size = maxSize;
     }
 
+    if (bsp_fs_lock(5000U) != 0)
+    {
+        bsp_fs_log("CrashLog_Write lock failed");
+        return false;
+    }
+    BOARD_InitExtFlashPins();
+    bsp_fs_flash_recover((LPSPI_Type *)s_norHandle.driverBaseAddr);
+
     const uint32_t addr = bsp_fs_get_crashlog_base();
     const status_t est = Nor_Flash_Erase_Sector(&s_norHandle, addr);
     if (est != kStatus_Success)
     {
+        bsp_fs_unlock();
         bsp_fs_log("CrashLog_Write erase failed: addr=0x%08X status=%d", (unsigned)addr, (int)est);
         return false;
     }
 
     const status_t pst = Nor_Flash_Program(&s_norHandle, addr, (uint8_t *)(uintptr_t)data, size);
+    bsp_fs_unlock();
     bsp_fs_log("CrashLog_Write: addr=0x%08X size=%u status=%d", (unsigned)addr, (unsigned)size, (int)pst);
     return (pst == kStatus_Success);
 }
@@ -1054,8 +1183,17 @@ int BSP_FS_CrashLog_Read(uint32_t offset, void *out, uint32_t size)
         size = remaining;
     }
 
+    if (bsp_fs_lock(5000U) != 0)
+    {
+        bsp_fs_log("CrashLog_Read lock failed");
+        return -1;
+    }
+    BOARD_InitExtFlashPins();
+    bsp_fs_flash_recover((LPSPI_Type *)s_norHandle.driverBaseAddr);
+
     const uint32_t addr = bsp_fs_get_crashlog_base() + offset;
     const status_t rst = Nor_Flash_Read(&s_norHandle, addr, (uint8_t *)out, size);
+    bsp_fs_unlock();
     if (rst != kStatus_Success)
     {
         bsp_fs_log("CrashLog_Read failed: addr=0x%08X size=%u status=%d", (unsigned)addr, (unsigned)size, (int)rst);

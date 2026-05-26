@@ -59,9 +59,13 @@ bool APP_Storage_GetLogSize(uint64_t task_id, uint32_t *out_size);
 
 // 从文件偏移量读取数据
 int APP_Storage_ReadData(uint64_t task_id, uint32_t offset, void *out, uint32_t size);
+int APP_Storage_ReadPreData(uint64_t task_id, uint32_t offset, void *out, uint32_t size);
+int APP_Storage_ReadMeta(uint64_t task_id, uint32_t offset, void *out, uint32_t size);
 
 // 获取数据大小
 bool APP_Storage_GetDataSize(uint64_t task_id, uint32_t *out_size);
+bool APP_Storage_GetPreDataSize(uint64_t task_id, uint32_t *out_size);
+bool APP_Storage_GetMetaSize(uint64_t task_id, uint32_t *out_size);
 
 // 删除任务
 bool APP_Storage_DeleteTask(uint64_t task_id);
