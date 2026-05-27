@@ -9,7 +9,7 @@
 #include "task.h"
 
 #ifndef TASK_STORAGE_VERIFY_READBACK_ENABLE
-#define TASK_STORAGE_VERIFY_READBACK_ENABLE 1
+#define TASK_STORAGE_VERIFY_READBACK_ENABLE 0
 #endif
 
 static bool s_storage_ready;
@@ -155,6 +155,17 @@ static bool task_storage_begin_if_needed(uint64_t task_id)
         {
             s_last_begin_log_tick = now;
             BSP_UART_Print("[STO] Init failed\r\n");
+            bsp_fs_diag_t diag;
+            BSP_FS_GetDiag(&diag, false);
+            BSP_UART_Print("[FS_DIAG] noent=%u/%u open_io=%u prog_mis=%u/%u erase_mis=%u/%u io=%u\r\n",
+                           (unsigned)diag.fileappend_open_noent,
+                           (unsigned)diag.fileappend_open_noent_recovered,
+                           (unsigned)diag.fileappend_open_io,
+                           (unsigned)diag.prog_verify_mismatch,
+                           (unsigned)diag.prog_verify_recovered,
+                           (unsigned)diag.erase_verify_failed,
+                           (unsigned)diag.erase_verify_recovered,
+                           (unsigned)diag.io_error);
         }
         return false;
     }
@@ -296,6 +307,15 @@ void TASK_StorageTask(void *pvParameters)
                 if (!s_last_fs_diag_valid ||
                     (memcmp(&diag, &s_last_fs_diag, sizeof(diag)) != 0))
                 {
+                    BSP_UART_Print("[FS_DIAG] noent=%u/%u open_io=%u prog_mis=%u/%u erase_mis=%u/%u io=%u\r\n",
+                                   (unsigned)diag.fileappend_open_noent,
+                                   (unsigned)diag.fileappend_open_noent_recovered,
+                                   (unsigned)diag.fileappend_open_io,
+                                   (unsigned)diag.prog_verify_mismatch,
+                                   (unsigned)diag.prog_verify_recovered,
+                                   (unsigned)diag.erase_verify_failed,
+                                   (unsigned)diag.erase_verify_recovered,
+                                   (unsigned)diag.io_error);
                     (void)APP_Storage_LogPrintf(s_storage_task_id,
                                                 "[FS_DIAG] noent=%u/%u open_io=%u prog_mis=%u/%u erase_mis=%u/%u io=%u\n",
                                                 (unsigned)diag.fileappend_open_noent,

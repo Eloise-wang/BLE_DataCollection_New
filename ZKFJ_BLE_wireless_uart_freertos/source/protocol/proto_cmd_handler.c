@@ -36,6 +36,10 @@ static void *s_tx_user;
 static SemaphoreHandle_t s_tx_mutex;
 static bool s_ble_connected;
 
+#ifndef PROTO_STATUS_REPORT_ENABLE
+#define PROTO_STATUS_REPORT_ENABLE 0
+#endif
+
 static void proto_send(const uint8_t *data, size_t len)
 {
     if (s_tx_fn != NULL)
@@ -135,6 +139,9 @@ void PROTO_TxRaw(const uint8_t *data, size_t len)
 
 void PROTO_SendStatusNow(void)
 {
+#if !PROTO_STATUS_REPORT_ENABLE
+    return;
+#else
     const uint64_t task_id = TASK_GetActiveTaskId();
     const uint32_t bits = (g_system_event_group != NULL) ? (uint32_t)xEventGroupGetBits(g_system_event_group) : 0U;
     const uint8_t bat = SENSORS_GetBatteryLevel();
@@ -145,6 +152,7 @@ void PROTO_SendStatusNow(void)
     {
         proto_send(buf, out_len);
     }
+#endif
 }
 
 bool PROTO_SendRealtimeRecord(uint64_t task_id, const void *record, uint16_t record_size, uint32_t seq)
@@ -371,6 +379,12 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
     else
     {
         proto_send_ack(msg->cmd, PROTO_STATUS_PARAM_ERROR);
+        return;
+    }
+
+    if (total_bytes == 0U)
+    {
+        proto_send_ack(msg->cmd, PROTO_STATUS_NOT_FOUND);
         return;
     }
 

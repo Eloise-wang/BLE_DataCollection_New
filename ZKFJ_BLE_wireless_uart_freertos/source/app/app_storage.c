@@ -77,6 +77,10 @@ bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *me
 
     app_storage_task_path(logPath, task_id, "sys.log");
     (void)BSP_FS_Remove(logPath);
+    {
+        const char *init_line = "[SYS] start\n";
+        (void)BSP_FS_FileAppend(logPath, init_line, (uint32_t)strlen(init_line));
+    }
 
     if (meta != NULL)
     {
@@ -203,7 +207,17 @@ bool APP_Storage_GetLogSize(uint64_t task_id, uint32_t *out_size)
     }
 
     app_storage_task_path(logPath, task_id, "sys.log");
-    return (BSP_FS_FileSize(logPath, out_size) == 0);
+    const int err = BSP_FS_FileSize(logPath, out_size);
+    if (err == 0)
+    {
+        return true;
+    }
+    if (err == -2)
+    {
+        *out_size = 0U;
+        return true;
+    }
+    return false;
 }
 
 int APP_Storage_ReadData(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
@@ -255,7 +269,17 @@ bool APP_Storage_GetDataSize(uint64_t task_id, uint32_t *out_size)
     }
 
     app_storage_task_path(dataPath, task_id, "data.bin");
-    return (BSP_FS_FileSize(dataPath, out_size) == 0);
+    const int err = BSP_FS_FileSize(dataPath, out_size);
+    if (err == 0)
+    {
+        return true;
+    }
+    if (err == -2)
+    {
+        *out_size = 0U;
+        return true;
+    }
+    return false;
 }
 
 bool APP_Storage_GetPreDataSize(uint64_t task_id, uint32_t *out_size)
@@ -268,7 +292,17 @@ bool APP_Storage_GetPreDataSize(uint64_t task_id, uint32_t *out_size)
     }
 
     app_storage_task_path(dataPath, task_id, "pre_data.bin");
-    return (BSP_FS_FileSize(dataPath, out_size) == 0);
+    const int err = BSP_FS_FileSize(dataPath, out_size);
+    if (err == 0)
+    {
+        return true;
+    }
+    if (err == -2)
+    {
+        *out_size = 0U;
+        return true;
+    }
+    return false;
 }
 
 bool APP_Storage_GetMetaSize(uint64_t task_id, uint32_t *out_size)
@@ -281,7 +315,17 @@ bool APP_Storage_GetMetaSize(uint64_t task_id, uint32_t *out_size)
     }
 
     app_storage_task_path(metaPath, task_id, "meta.bin");
-    return (BSP_FS_FileSize(metaPath, out_size) == 0);
+    const int err = BSP_FS_FileSize(metaPath, out_size);
+    if (err == 0)
+    {
+        return true;
+    }
+    if (err == -2)
+    {
+        *out_size = 0U;
+        return true;
+    }
+    return false;
 }
 
 bool APP_Storage_DeleteTask(uint64_t task_id)
