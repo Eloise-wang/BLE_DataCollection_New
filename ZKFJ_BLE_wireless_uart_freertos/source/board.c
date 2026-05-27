@@ -280,7 +280,7 @@ uint32_t BOARD_GetLpspiClock(void)
 
 uint32_t BOARD_GetNorFlashBaudrate(void)
 {
-    return 8000000U;
+    return 2000000U;
 }
 
 LPSPI_Type *BOARD_GetLpspiForNorFlash(void)

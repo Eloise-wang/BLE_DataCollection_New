@@ -39,11 +39,14 @@ static lfs_t s_lfs;
 static struct lfs_config s_lfsCfg;
 static bsp_fs_ctx_t s_ctx;
 
+static bsp_fs_diag_t s_diag;
+
 static uint8_t s_readCache[256U];
 static uint8_t s_progCache[256U];
 static uint8_t s_lookahead[64U];
 static uint8_t s_eraseVerifyBuf[32U];
 static uint8_t s_progVerifyBuf[256U];
+static uint8_t s_progVerifyBufSlow[256U];
 
 #ifndef BSP_FS_IO_VERIFY_ENABLE
 #define BSP_FS_IO_VERIFY_ENABLE 1
@@ -58,7 +61,7 @@ static lpspi_memory_config_t s_memCfg = {
 };
 
 #ifndef BSP_FS_LOG_ENABLE
-#define BSP_FS_LOG_ENABLE 0
+#define BSP_FS_LOG_ENABLE 1
 #endif
 
 #ifndef BSP_FS_BLOCK_COUNT_OVERRIDE
@@ -71,6 +74,10 @@ static lpspi_memory_config_t s_memCfg = {
 
 #ifndef BSP_FS_AUTO_FORMAT_ON_MOUNT_FAIL
 #define BSP_FS_AUTO_FORMAT_ON_MOUNT_FAIL 0
+#endif
+
+#ifndef BSP_FS_VERIFY_ALL_ERASE_ON_FORMAT
+#define BSP_FS_VERIFY_ALL_ERASE_ON_FORMAT 0
 #endif
 
 #if BSP_FS_LOG_ENABLE
@@ -170,6 +177,16 @@ static bool bsp_fs_spi_cmd_only(LPSPI_Type *base, const uint8_t *cmd, size_t cmd
     return (LPSPI_MemXfer(&xfer, base) == kStatus_Success);
 }
 
+static status_t bsp_fs_nor_read_raw(nor_handle_t *nor, uint32_t address, uint8_t *buffer, uint32_t length, bool fastRead)
+{
+    if ((nor == NULL) || (nor->driverBaseAddr == NULL) || (buffer == NULL) || (length == 0U))
+    {
+        return kStatus_InvalidArgument;
+    }
+
+    return LPSPI_MemRead(address, buffer, length, fastRead, (LPSPI_Type *)nor->driverBaseAddr);
+}
+
 static void bsp_fs_flash_recover(LPSPI_Type *base)
 {
     if (base == NULL)
@@ -187,6 +204,25 @@ static void bsp_fs_flash_recover(LPSPI_Type *base)
 }
 
 #if BSP_FS_LOG_ENABLE
+static void bsp_fs_log_extflash_pins(const char *tag)
+{
+    const uint32_t pcr0 = PORTB->PCR[0U];
+    const uint32_t pcr4 = PORTB->PCR[4U];
+    const uint32_t pddr = GPIOB->PDDR;
+    const uint32_t pdor = GPIOB->PDOR;
+    const uint32_t pdir = GPIOB->PDIR;
+    bsp_fs_log("%s pins: B0 pcr=0x%08X pdir=%u pdor=%u pddr=%u | B4 pcr=0x%08X pdir=%u pdor=%u pddr=%u",
+               (tag != NULL) ? tag : "?",
+               (unsigned)pcr0,
+               (unsigned)((pdir >> 0U) & 1U),
+               (unsigned)((pdor >> 0U) & 1U),
+               (unsigned)((pddr >> 0U) & 1U),
+               (unsigned)pcr4,
+               (unsigned)((pdir >> 4U) & 1U),
+               (unsigned)((pdor >> 4U) & 1U),
+               (unsigned)((pddr >> 4U) & 1U));
+}
+
 static void bsp_fs_log_flash_regs(LPSPI_Type *base, const char *tag)
 {
     if ((base == NULL) || (tag == NULL))
@@ -238,6 +274,57 @@ static void bsp_fs_log_flash_regs(LPSPI_Type *base, const char *tag)
         bsp_fs_log("%s sr3=0x%02X", tag, (unsigned)sr3);
     }
 }
+
+static uint8_t bsp_fs_popcount8(uint8_t v)
+{
+    v = (uint8_t)(v - ((v >> 1U) & 0x55U));
+    v = (uint8_t)((v & 0x33U) + ((v >> 2U) & 0x33U));
+    return (uint8_t)((v + (v >> 4U)) & 0x0FU);
+}
+
+static void bsp_fs_log_verify_diff(const char *tag, const uint8_t *expected, const uint8_t *actual, uint32_t size)
+{
+    if ((expected == NULL) || (actual == NULL) || (size == 0U))
+    {
+        return;
+    }
+
+    uint32_t first = 0xFFFFFFFFUL;
+    uint32_t progFailBits = 0U;
+    uint32_t notErasedBits = 0U;
+
+    for (uint32_t i = 0U; i < size; i++)
+    {
+        const uint8_t e = expected[i];
+        const uint8_t a = actual[i];
+        if ((first == 0xFFFFFFFFUL) && (e != a))
+        {
+            first = i;
+        }
+
+        progFailBits += (uint32_t)bsp_fs_popcount8((uint8_t)(a & (uint8_t)~e));
+        notErasedBits += (uint32_t)bsp_fs_popcount8((uint8_t)(e & (uint8_t)~a));
+    }
+
+    if (first != 0xFFFFFFFFUL)
+    {
+        bsp_fs_log("%s diff: first=%u exp=0x%02X act=0x%02X progFailBits=%u notErasedBits=%u",
+                   (tag != NULL) ? tag : "?",
+                   (unsigned)first,
+                   (unsigned)expected[first],
+                   (unsigned)actual[first],
+                   (unsigned)progFailBits,
+                   (unsigned)notErasedBits);
+    }
+    else
+    {
+        bsp_fs_log("%s diff: no_diff size=%u progFailBits=%u notErasedBits=%u",
+                   (tag != NULL) ? tag : "?",
+                   (unsigned)size,
+                   (unsigned)progFailBits,
+                   (unsigned)notErasedBits);
+    }
+}
 #else
 static void bsp_fs_log_flash_regs(LPSPI_Type *base, const char *tag)
 {
@@ -246,9 +333,77 @@ static void bsp_fs_log_flash_regs(LPSPI_Type *base, const char *tag)
 }
 #endif
 
+static void bsp_fs_log_lfs_stat_locked(const char *tag, const char *path)
+{
+    if ((tag == NULL) || (path == NULL))
+    {
+        return;
+    }
+
+    struct lfs_info info;
+    const int err = lfs_stat(&s_lfs, path, &info);
+    if (err == 0)
+    {
+        bsp_fs_log("%s stat ok: %s type=%u size=%u", tag, path, (unsigned)info.type, (unsigned)info.size);
+        return;
+    }
+    bsp_fs_log("%s stat fail: %s err=%d,%s", tag, path, err, bsp_fs_lfs_err_str(err));
+}
+
+static void bsp_fs_log_path_ctx_locked(const char *tag, const char *path)
+{
+    if ((tag == NULL) || (path == NULL))
+    {
+        return;
+    }
+
+    bsp_fs_log("%s path: %s", tag, path);
+    bsp_fs_log_lfs_stat_locked(tag, path);
+
+    const char *slash = strrchr(path, '/');
+    if ((slash != NULL) && (slash != path))
+    {
+        char parent[128];
+        const size_t n = (size_t)(slash - path);
+        const size_t copyN = (n < (sizeof(parent) - 1U)) ? n : (sizeof(parent) - 1U);
+        memcpy(parent, path, copyN);
+        parent[copyN] = '\0';
+        bsp_fs_log_lfs_stat_locked(tag, parent);
+    }
+    else
+    {
+        bsp_fs_log("%s parent skip", tag);
+    }
+}
+
+static int bsp_fs_wait_nor_ready(nor_handle_t *nor, uint32_t timeout_ms)
+{
+    if (nor == NULL)
+    {
+        return -1;
+    }
+
+    for (uint32_t waited = 0U; waited < timeout_ms; waited++)
+    {
+        bool busy = false;
+        const status_t st = Nor_Flash_Is_Busy(nor, &busy);
+        if (st != kStatus_Success)
+        {
+            return -1;
+        }
+        if (!busy)
+        {
+            return 0;
+        }
+        OSA_TimeDelay(1U);
+    }
+    return -1;
+}
+
 static status_t bsp_fs_prepare_flash_io_locked(void)
 {
     BOARD_InitExtFlashPins();
+    bsp_fs_log_extflash_pins("after_pinmux");
 
     CLOCK_EnableClock(kCLOCK_Lpspi1);
     CLOCK_SetIpSrc(kCLOCK_Lpspi1, kCLOCK_IpSrcFro192M);
@@ -261,6 +416,7 @@ static status_t bsp_fs_prepare_flash_io_locked(void)
     s_norCfg.driverBaseAddr   = NULL;
     const status_t st = Nor_Flash_Init(&s_norCfg, &s_norHandle);
     bsp_fs_log("Nor_Flash_Init(re) status=%d", (int)st);
+    bsp_fs_log_extflash_pins("after_init");
     if (st == kStatus_Success)
     {
         if (s_norHandle.bytesInPageSize != 0U)
@@ -353,7 +509,7 @@ static int bsp_lfs_read(const struct lfs_config *c, lfs_block_t block, lfs_off_t
 {
     const bsp_fs_ctx_t *ctx = (const bsp_fs_ctx_t *)c->context;
     const uint32_t addr = ctx->base_offset + ((uint32_t)block * c->block_size) + (uint32_t)off;
-    const status_t st = Nor_Flash_Read(ctx->nor, addr, (uint8_t *)buffer, (uint32_t)size);
+    const status_t st = bsp_fs_nor_read_raw(ctx->nor, addr, (uint8_t *)buffer, (uint32_t)size, false);
     if (st != kStatus_Success)
     {
         bsp_fs_log("IO read failed: st=%d addr=0x%08X block=%u off=%u size=%u",
@@ -370,22 +526,90 @@ static int bsp_lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t
     const status_t st = Nor_Flash_Program(ctx->nor, addr, (uint8_t *)(uintptr_t)buffer, (uint32_t)size);
     if (st != kStatus_Success)
     {
+        s_diag.io_error++;
         bsp_fs_log("IO prog failed: st=%d addr=0x%08X block=%u off=%u size=%u",
                    (int)st, (unsigned)addr, (unsigned)block, (unsigned)off, (unsigned)size);
+        bsp_fs_log_extflash_pins("prog_fail");
+        bsp_fs_log_flash_regs((LPSPI_Type *)ctx->nor->driverBaseAddr, "prog_fail");
+        return LFS_ERR_IO;
+    }
+
+    if (bsp_fs_wait_nor_ready(ctx->nor, 2000U) != 0)
+    {
+        s_diag.io_error++;
+        bsp_fs_log("IO prog wait ready timeout: addr=0x%08X size=%u", (unsigned)addr, (unsigned)size);
+        bsp_fs_log_extflash_pins("prog_wait_timeout");
+        bsp_fs_log_flash_regs((LPSPI_Type *)ctx->nor->driverBaseAddr, "prog_wait_timeout");
         return LFS_ERR_IO;
     }
 
 #if BSP_FS_IO_VERIFY_ENABLE
     if ((size <= (lfs_size_t)sizeof(s_progVerifyBuf)) && (buffer != NULL))
     {
-        if (Nor_Flash_Read(ctx->nor, addr, s_progVerifyBuf, (uint32_t)size) != kStatus_Success)
+        const uint8_t *expected = (const uint8_t *)buffer;
+        if (bsp_fs_nor_read_raw(ctx->nor, addr, s_progVerifyBuf, (uint32_t)size, false) != kStatus_Success)
         {
+            s_diag.io_error++;
             bsp_fs_log("IO prog verify read failed: addr=0x%08X size=%u", (unsigned)addr, (unsigned)size);
+            bsp_fs_log_extflash_pins("prog_verify_read_fail");
+            bsp_fs_log_flash_regs((LPSPI_Type *)ctx->nor->driverBaseAddr, "prog_verify_read_fail");
             return LFS_ERR_IO;
         }
-        if (memcmp(s_progVerifyBuf, buffer, (size_t)size) != 0)
+        if (memcmp(s_progVerifyBuf, expected, (size_t)size) != 0)
         {
-            bsp_fs_log("IO prog verify mismatch: addr=0x%08X size=%u", (unsigned)addr, (unsigned)size);
+            s_diag.prog_verify_mismatch++;
+            bsp_fs_log("IO prog verify mismatch: addr=0x%08X block=%u off=%u size=%u",
+                       (unsigned)addr, (unsigned)block, (unsigned)off, (unsigned)size);
+            bsp_fs_log_extflash_pins("prog_verify_mismatch");
+            bsp_fs_log_flash_regs((LPSPI_Type *)ctx->nor->driverBaseAddr, "prog_verify_mismatch");
+            bsp_fs_log_verify_diff("prog_verify_mismatch", expected, s_progVerifyBuf, (uint32_t)size);
+
+            if ((size <= (lfs_size_t)sizeof(s_progVerifyBufSlow)) &&
+                (bsp_fs_nor_read_raw(ctx->nor, addr, s_progVerifyBufSlow, (uint32_t)size, false) == kStatus_Success))
+            {
+                if (memcmp(s_progVerifyBufSlow, expected, (size_t)size) == 0)
+                {
+                    s_diag.prog_verify_recovered++;
+                    bsp_fs_log("IO prog verify mismatch recovered by reread2: addr=0x%08X size=%u", (unsigned)addr, (unsigned)size);
+                    return 0;
+                }
+
+                if (memcmp(s_progVerifyBufSlow, s_progVerifyBuf, (size_t)size) != 0)
+                {
+                    bsp_fs_log_verify_diff("prog_verify_mismatch_reread2", s_progVerifyBuf, s_progVerifyBufSlow, (uint32_t)size);
+                }
+
+                if (bsp_fs_nor_read_raw(ctx->nor, addr, s_progVerifyBufSlow, (uint32_t)size, false) == kStatus_Success)
+                {
+                    if (memcmp(s_progVerifyBufSlow, expected, (size_t)size) == 0)
+                    {
+                        s_diag.prog_verify_recovered++;
+                        bsp_fs_log("IO prog verify mismatch recovered by reread3: addr=0x%08X size=%u", (unsigned)addr, (unsigned)size);
+                        return 0;
+                    }
+                }
+            }
+
+            const status_t rst = Nor_Flash_Program(ctx->nor, addr, (uint8_t *)(uintptr_t)expected, (uint32_t)size);
+            if (rst == kStatus_Success)
+            {
+                if (bsp_fs_wait_nor_ready(ctx->nor, 2000U) == 0)
+                {
+                    if (bsp_fs_nor_read_raw(ctx->nor, addr, s_progVerifyBufSlow, (uint32_t)size, false) == kStatus_Success)
+                    {
+                        if (memcmp(s_progVerifyBufSlow, expected, (size_t)size) == 0)
+                        {
+                            s_diag.prog_verify_recovered++;
+                            bsp_fs_log("IO prog verify mismatch recovered by retry: addr=0x%08X size=%u", (unsigned)addr, (unsigned)size);
+                            return 0;
+                        }
+                    }
+                }
+                bsp_fs_log("IO prog verify retry failed: addr=0x%08X size=%u", (unsigned)addr, (unsigned)size);
+                bsp_fs_log_extflash_pins("prog_verify_retry_fail");
+                bsp_fs_log_flash_regs((LPSPI_Type *)ctx->nor->driverBaseAddr, "prog_verify_retry_fail");
+            }
+            s_diag.io_error++;
             return LFS_ERR_IO;
         }
     }
@@ -400,13 +624,45 @@ static int bsp_lfs_erase(const struct lfs_config *c, lfs_block_t block)
     const status_t st = Nor_Flash_Erase_Sector(ctx->nor, addr);
     if (st != kStatus_Success)
     {
+        s_diag.io_error++;
         bsp_fs_log("IO erase failed: st=%d addr=0x%08X block=%u", (int)st, (unsigned)addr, (unsigned)block);
+        bsp_fs_log_extflash_pins("erase_fail");
+        bsp_fs_log_flash_regs((LPSPI_Type *)ctx->nor->driverBaseAddr, "erase_fail");
+        return LFS_ERR_IO;
+    }
+
+    if (bsp_fs_wait_nor_ready(ctx->nor, 5000U) != 0)
+    {
+        s_diag.io_error++;
+        bsp_fs_log("IO erase wait ready timeout: addr=0x%08X block=%u", (unsigned)addr, (unsigned)block);
+        bsp_fs_log_extflash_pins("erase_wait_timeout");
+        bsp_fs_log_flash_regs((LPSPI_Type *)ctx->nor->driverBaseAddr, "erase_wait_timeout");
         return LFS_ERR_IO;
     }
 #if BSP_FS_IO_VERIFY_ENABLE
     if (bsp_fs_verify_erased_sector(addr, c->block_size) != 0)
     {
+        s_diag.erase_verify_failed++;
         bsp_fs_log("IO erase verify failed: addr=0x%08X block=%u", (unsigned)addr, (unsigned)block);
+        bsp_fs_log_extflash_pins("erase_verify_fail");
+        bsp_fs_log_flash_regs((LPSPI_Type *)ctx->nor->driverBaseAddr, "erase_verify_fail");
+        const status_t rst = Nor_Flash_Erase_Sector(ctx->nor, addr);
+        if (rst == kStatus_Success)
+        {
+            if (bsp_fs_wait_nor_ready(ctx->nor, 5000U) == 0)
+            {
+                if (bsp_fs_verify_erased_sector(addr, c->block_size) == 0)
+                {
+                    s_diag.erase_verify_recovered++;
+                    bsp_fs_log("IO erase verify recovered by retry: addr=0x%08X block=%u", (unsigned)addr, (unsigned)block);
+                    return 0;
+                }
+            }
+            bsp_fs_log("IO erase verify retry failed: addr=0x%08X block=%u", (unsigned)addr, (unsigned)block);
+            bsp_fs_log_extflash_pins("erase_verify_retry_fail");
+            bsp_fs_log_flash_regs((LPSPI_Type *)ctx->nor->driverBaseAddr, "erase_verify_retry_fail");
+        }
+        s_diag.io_error++;
         return LFS_ERR_IO;
     }
 #endif
@@ -426,7 +682,7 @@ static int bsp_fs_verify_erased_sector(uint32_t addr, uint32_t sectorSize)
         return -1;
     }
 
-    if (Nor_Flash_Read(&s_norHandle, addr, s_eraseVerifyBuf, (uint32_t)sizeof(s_eraseVerifyBuf)) != kStatus_Success)
+    if (bsp_fs_nor_read_raw(&s_norHandle, addr, s_eraseVerifyBuf, (uint32_t)sizeof(s_eraseVerifyBuf), false) != kStatus_Success)
     {
         bsp_fs_log("verify read failed: addr=0x%08X", (unsigned)addr);
         return -1;
@@ -442,7 +698,7 @@ static int bsp_fs_verify_erased_sector(uint32_t addr, uint32_t sectorSize)
     }
 
     const uint32_t tailAddr = addr + sectorSize - (uint32_t)sizeof(s_eraseVerifyBuf);
-    if (Nor_Flash_Read(&s_norHandle, tailAddr, s_eraseVerifyBuf, (uint32_t)sizeof(s_eraseVerifyBuf)) != kStatus_Success)
+    if (bsp_fs_nor_read_raw(&s_norHandle, tailAddr, s_eraseVerifyBuf, (uint32_t)sizeof(s_eraseVerifyBuf), false) != kStatus_Success)
     {
         bsp_fs_log("verify read failed: addr=0x%08X", (unsigned)tailAddr);
         return -1;
@@ -511,7 +767,11 @@ static int bsp_fs_mount_with_repair_locked(void)
                     bsp_fs_log("physical erase failed: st=%d addr=0x%08X", (int)est, (unsigned)addr);
                     return LFS_ERR_IO;
                 }
-                if ((addr < (2U * sector)) || (((addr / sector) & 0xFFU) == 0xFFU) || ((addr + sector) >= fsSize))
+                const bool need_verify = (BSP_FS_VERIFY_ALL_ERASE_ON_FORMAT != 0) ||
+                                         (addr < (2U * sector)) ||
+                                         (((addr / sector) & 0xFFU) == 0xFFU) ||
+                                         ((addr + sector) >= fsSize);
+                if (need_verify)
                 {
                     if (bsp_fs_verify_erased_sector(addr, sector) != 0)
                     {
@@ -586,7 +846,11 @@ static int bsp_fs_repair_on_corrupt_locked(void)
                 bsp_fs_log("physical erase failed: st=%d addr=0x%08X", (int)est, (unsigned)addr);
                 return LFS_ERR_IO;
             }
-            if ((addr < (2U * sector)) || (((addr / sector) & 0xFFU) == 0xFFU) || ((addr + sector) >= fsSize))
+            const bool need_verify = (BSP_FS_VERIFY_ALL_ERASE_ON_FORMAT != 0) ||
+                                     (addr < (2U * sector)) ||
+                                     (((addr / sector) & 0xFFU) == 0xFFU) ||
+                                     ((addr + sector) >= fsSize);
+            if (need_verify)
             {
                 if (bsp_fs_verify_erased_sector(addr, sector) != 0)
                 {
@@ -918,7 +1182,11 @@ bool BSP_FS_Format(void)
                 bsp_fs_unlock();
                 return false;
             }
-            if ((addr < (2U * sector)) || (((addr / sector) & 0xFFU) == 0xFFU) || ((addr + sector) >= fsSize))
+            const bool need_verify = (BSP_FS_VERIFY_ALL_ERASE_ON_FORMAT != 0) ||
+                                     (addr < (2U * sector)) ||
+                                     (((addr / sector) & 0xFFU) == 0xFFU) ||
+                                     ((addr + sector) >= fsSize);
+            if (need_verify)
             {
                 if (bsp_fs_verify_erased_sector(addr, sector) != 0)
                 {
@@ -982,6 +1250,28 @@ int BSP_FS_FileAppend(const char *path, const void *data, uint32_t size)
             s_mounted = false;
         }
     }
+
+    if (err == LFS_ERR_NOENT)
+    {
+        s_diag.fileappend_open_noent++;
+        bsp_fs_log("FileAppend open failed: %s err=%d,%s", path, err, bsp_fs_lfs_err_str(err));
+        bsp_fs_log_path_ctx_locked("FileAppend noent", path);
+
+        bsp_fs_flash_recover((LPSPI_Type *)s_norHandle.driverBaseAddr);
+        const int rerr = lfs_file_open(&s_lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_APPEND);
+        bsp_fs_log("FileAppend open retry: %s err=%d,%s", path, rerr, bsp_fs_lfs_err_str(rerr));
+        err = rerr;
+        if (err == 0)
+        {
+            s_diag.fileappend_open_noent_recovered++;
+        }
+    }
+    else if (err == LFS_ERR_IO)
+    {
+        s_diag.fileappend_open_io++;
+        s_diag.io_error++;
+    }
+
     if (err == 0)
     {
         const lfs_ssize_t w = lfs_file_write(&s_lfs, &f, data, (lfs_size_t)size);
@@ -989,7 +1279,27 @@ int BSP_FS_FileAppend(const char *path, const void *data, uint32_t size)
         {
             err = (int)w;
         }
-        (void)lfs_file_close(&s_lfs, &f);
+        const int cerr = lfs_file_close(&s_lfs, &f);
+        if (cerr != 0)
+        {
+            bsp_fs_log("FileAppend close failed: %s err=%d,%s", path, cerr, bsp_fs_lfs_err_str(cerr));
+            if (err == 0)
+            {
+                err = cerr;
+            }
+        }
+    }
+    else
+    {
+        if (err == LFS_ERR_NOENT)
+        {
+            bsp_fs_log_path_ctx_locked("FileAppend noent(ret)", path);
+        }
+    }
+
+    if (err == LFS_ERR_NOENT)
+    {
+        bsp_fs_log_path_ctx_locked("FileAppend noent(ret2)", path);
     }
 
     bsp_fs_unlock();
@@ -1265,4 +1575,16 @@ int BSP_FS_CrashLog_Read(uint32_t offset, void *out, uint32_t size)
     }
     bsp_fs_log("CrashLog_Read: addr=0x%08X size=%u ok", (unsigned)addr, (unsigned)size);
     return (int)size;
+}
+
+void BSP_FS_GetDiag(bsp_fs_diag_t *out, bool clear)
+{
+    if (out != NULL)
+    {
+        *out = s_diag;
+    }
+    if (clear)
+    {
+        memset(&s_diag, 0, sizeof(s_diag));
+    }
 }

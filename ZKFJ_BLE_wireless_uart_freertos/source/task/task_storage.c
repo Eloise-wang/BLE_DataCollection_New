@@ -4,6 +4,7 @@
 
 #include "app_global.h"
 #include "app_storage.h"
+#include "bsp_fs.h"
 #include "bsp_uart.h"
 #include "task.h"
 
@@ -20,6 +21,8 @@ static bool s_logged_first_write;
 static uint32_t s_verify_ok_count;
 static uint32_t s_verify_fail_count;
 static uint32_t s_verify_total_count;
+static bsp_fs_diag_t s_last_fs_diag;
+static bool s_last_fs_diag_valid;
 
 #if TASK_STORAGE_VERIFY_READBACK_ENABLE
 static void task_storage_print_record(const char *tag, const sensor_record_t *r)
@@ -174,6 +177,9 @@ static bool task_storage_begin_if_needed(uint64_t task_id)
         s_verify_ok_count = 0U;
         s_verify_fail_count = 0U;
         s_verify_total_count = 0U;
+        (void)memset(&s_last_fs_diag, 0, sizeof(s_last_fs_diag));
+        BSP_FS_GetDiag(NULL, true);
+        s_last_fs_diag_valid = true;
         if (g_system_event_group != NULL)
         {
             (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
@@ -284,6 +290,25 @@ void TASK_StorageTask(void *pvParameters)
                     }
                 }
 #endif
+
+                bsp_fs_diag_t diag;
+                BSP_FS_GetDiag(&diag, false);
+                if (!s_last_fs_diag_valid ||
+                    (memcmp(&diag, &s_last_fs_diag, sizeof(diag)) != 0))
+                {
+                    (void)APP_Storage_LogPrintf(s_storage_task_id,
+                                                "[FS_DIAG] noent=%u/%u open_io=%u prog_mis=%u/%u erase_mis=%u/%u io=%u\n",
+                                                (unsigned)diag.fileappend_open_noent,
+                                                (unsigned)diag.fileappend_open_noent_recovered,
+                                                (unsigned)diag.fileappend_open_io,
+                                                (unsigned)diag.prog_verify_mismatch,
+                                                (unsigned)diag.prog_verify_recovered,
+                                                (unsigned)diag.erase_verify_failed,
+                                                (unsigned)diag.erase_verify_recovered,
+                                                (unsigned)diag.io_error);
+                    s_last_fs_diag = diag;
+                    s_last_fs_diag_valid = true;
+                }
             }
         }
     }

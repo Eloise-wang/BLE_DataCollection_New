@@ -273,7 +273,7 @@ void APP_InitServices(void)
 #if (defined(gAppLedCnt_c) && (gAppLedCnt_c > 0))
 void LedStartFlashingAllLeds(void)
 {
-    for (uint8_t ledNo = 0U; ledNo < (uint8_t)gAppLedCnt_c; ledNo++)
+    for (uint8_t ledNo = 1U; ledNo < (uint8_t)gAppLedCnt_c; ledNo++)
     {
         LedFlashing(ledNo);
     }
@@ -283,7 +283,7 @@ void LedStartFlashingAllLeds(void)
 #if (defined(gAppLedCnt_c) && (gAppLedCnt_c > 0))
 void LedStopFlashingAllLeds(void)
 {
-    for (uint8_t ledNo = 0U; ledNo < (uint8_t)gAppLedCnt_c; ledNo++)
+    for (uint8_t ledNo = 1U; ledNo < (uint8_t)gAppLedCnt_c; ledNo++)
     {
         (void)LED_TurnOnOff((led_handle_t)g_ledHandle[ledNo], 0U);
     }

@@ -30,6 +30,20 @@ int BSP_FS_Remove(const char *path);
 // 格式化文件系统（清空所有任务数据）
 bool BSP_FS_Format(void);
 
+typedef struct
+{
+    uint32_t fileappend_open_noent;
+    uint32_t fileappend_open_noent_recovered;
+    uint32_t fileappend_open_io;
+    uint32_t prog_verify_mismatch;
+    uint32_t prog_verify_recovered;
+    uint32_t erase_verify_failed;
+    uint32_t erase_verify_recovered;
+    uint32_t io_error;
+} bsp_fs_diag_t;
+
+void BSP_FS_GetDiag(bsp_fs_diag_t *out, bool clear);
+
 //追加写入文件
 int BSP_FS_FileAppend(const char *path, const void *data, uint32_t size);
 // 写入文件并截断
