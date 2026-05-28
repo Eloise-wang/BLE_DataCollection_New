@@ -15,7 +15,6 @@
 #include "task.h"
 
 #include "app_storage.h"
-#include "bsp_fs.h"
 #include "bsp_uart.h"
 #include "proto_frame.h"
 #include "sensors.h"
@@ -300,13 +299,13 @@ static void proto_handle_clear_task(const proto_cmd_msg_t *msg)
     {
         if (!APP_Storage_DeleteTask(task_id))
         {
-            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+            proto_send_ack(msg->cmd, PROTO_STATUS_NOT_FOUND);
             return;
         }
     }
     else
     {
-        if (!BSP_FS_Format())
+        if (!APP_Storage_EraseAll())
         {
             proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
             return;

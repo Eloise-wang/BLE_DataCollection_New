@@ -7,34 +7,473 @@
 
 #include "app_storage.h"
 
-#include <stdarg.h>
-#include <stdio.h>
 #include <string.h>
 
-#include "bsp_fs.h"
 #include "bsp_uart.h"
+#include "bsp_crc.h"
 
-#define APP_STORAGE_DIR_MAX   32
-#define APP_STORAGE_PATH_MAX  64
-#define APP_STORAGE_LOG_BUF_MAX 256
+#include "board.h"
+#include "fsl_clock.h"
+#include "fsl_lpspi_mem_adapter.h"
+#include "fsl_lpspi_nor_flash.h"
+#include "fsl_os_abstraction.h"
+#include "pin_mux.h"
 
-static void app_storage_task_dir(char out[APP_STORAGE_DIR_MAX], uint64_t task_id)
+#include "FreeRTOS.h"
+#include "semphr.h"
+
+#define APP_STORE_MAGIC          0x474F4C53u
+#define APP_STORE_VERSION        1u
+#define APP_STORE_SLOT_COUNT     4u
+
+typedef struct
 {
-    const uint32_t hi = (uint32_t)(task_id >> 32);
-    const uint32_t lo = (uint32_t)(task_id & 0xFFFFFFFFu);
-    (void)snprintf(out, APP_STORAGE_DIR_MAX, "task_%08X%08X", (unsigned)hi, (unsigned)lo);
+    uint32_t magic;
+    uint32_t version;
+    uint64_t task_id;
+    app_storage_task_meta_t meta;
+    uint32_t reserved[6];
+    uint32_t header_crc;
+} app_store_header_t;
+
+typedef struct
+{
+    bool valid;
+    uint8_t slot;
+    uint64_t task_id;
+    uint32_t pre_size;
+    uint32_t data_size;
+    uint32_t pre_next_erase;
+    uint32_t data_next_erase;
+} app_store_task_state_t;
+
+static SemaphoreHandle_t s_flash_mutex;
+static bool s_flash_inited;
+static nor_config_t s_norCfg;
+static nor_handle_t s_norHandle;
+static lpspi_memory_config_t s_memCfg = {
+    .bytesInPageSize   = 256u,
+    .bytesInSectorSize = 4096u,
+    .bytesInMemorySize = (8u * 1024u * 1024u),
+};
+
+static bool s_layout_ready;
+static uint32_t s_sector_size;
+static uint32_t s_mem_size;
+static uint32_t s_usable_size;
+static uint32_t s_slot_size;
+static uint32_t s_pre_capacity;
+
+static app_store_task_state_t s_active;
+
+static void app_store_lock(void)
+{
+    if (s_flash_mutex == NULL)
+    {
+        s_flash_mutex = xSemaphoreCreateMutex();
+    }
+    if (s_flash_mutex != NULL)
+    {
+        (void)xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
+    }
 }
 
-static void app_storage_task_path(char out[APP_STORAGE_PATH_MAX], uint64_t task_id, const char *file)
+static void app_store_unlock(void)
 {
-    char dir[APP_STORAGE_DIR_MAX];
-    app_storage_task_dir(dir, task_id);
-    (void)snprintf(out, APP_STORAGE_PATH_MAX, "%s/%s", dir, file);
+    if (s_flash_mutex != NULL)
+    {
+        (void)xSemaphoreGive(s_flash_mutex);
+    }
+}
+
+static int app_store_wait_ready(uint32_t timeout_ms)
+{
+    for (uint32_t waited = 0u; waited < timeout_ms; waited++)
+    {
+        bool busy = false;
+        const status_t st = Nor_Flash_Is_Busy(&s_norHandle, &busy);
+        if (st != kStatus_Success)
+        {
+            return -1;
+        }
+        if (!busy)
+        {
+            return 0;
+        }
+        OSA_TimeDelay(1u);
+    }
+    return -1;
+}
+
+static bool app_store_flash_init_locked(void)
+{
+    if (s_flash_inited)
+    {
+        return (s_norHandle.driverBaseAddr != NULL);
+    }
+
+    BOARD_InitExtFlashPins();
+    CLOCK_EnableClock(kCLOCK_Lpspi1);
+    CLOCK_SetIpSrc(kCLOCK_Lpspi1, kCLOCK_IpSrcFro192M);
+    CLOCK_SetIpSrcDiv(kCLOCK_Lpspi1, kSCG_SysClkDivBy1);
+    CLOCK_EnableClockLPMode(kCLOCK_Lpspi1, kCLOCK_IpClkControl_fun1);
+
+    s_norCfg.memControlConfig = &s_memCfg;
+    s_norCfg.driverBaseAddr   = NULL;
+    const status_t st = Nor_Flash_Init(&s_norCfg, &s_norHandle);
+    if (st != kStatus_Success)
+    {
+        s_flash_inited = true;
+        return false;
+    }
+
+    if (s_norHandle.bytesInPageSize != 0u)
+    {
+        s_memCfg.bytesInPageSize = s_norHandle.bytesInPageSize;
+    }
+    if (s_norHandle.bytesInSectorSize != 0u)
+    {
+        s_memCfg.bytesInSectorSize = s_norHandle.bytesInSectorSize;
+    }
+    if (s_norHandle.bytesInMemorySize != 0u)
+    {
+        s_memCfg.bytesInMemorySize = s_norHandle.bytesInMemorySize;
+    }
+
+    s_sector_size = s_memCfg.bytesInSectorSize;
+    s_mem_size    = s_memCfg.bytesInMemorySize;
+    if ((s_sector_size == 0u) || (s_mem_size < s_sector_size))
+    {
+        s_flash_inited = true;
+        return false;
+    }
+
+    s_usable_size = s_mem_size - s_sector_size;
+    s_slot_size   = (s_usable_size / APP_STORE_SLOT_COUNT);
+    s_slot_size   = (s_slot_size / s_sector_size) * s_sector_size;
+    s_pre_capacity = 4u * s_sector_size;
+    if (s_pre_capacity > (s_slot_size / 8u))
+    {
+        s_pre_capacity = (s_slot_size / 8u);
+        s_pre_capacity = (s_pre_capacity / s_sector_size) * s_sector_size;
+    }
+
+    s_layout_ready = (s_slot_size >= (2u * s_sector_size + s_pre_capacity));
+    s_flash_inited = true;
+    return s_layout_ready;
+}
+
+static uint32_t app_store_slot_base(uint8_t slot)
+{
+    return (uint32_t)slot * s_slot_size;
+}
+
+static uint32_t app_store_pre_base(uint8_t slot)
+{
+    return app_store_slot_base(slot) + s_sector_size;
+}
+
+static uint32_t app_store_data_base(uint8_t slot)
+{
+    return app_store_pre_base(slot) + s_pre_capacity;
+}
+
+static uint32_t app_store_pre_capacity(void)
+{
+    return s_pre_capacity;
+}
+
+static uint32_t app_store_data_capacity(void)
+{
+    const uint32_t used = s_sector_size + s_pre_capacity;
+    if (s_slot_size <= used)
+    {
+        return 0u;
+    }
+    return s_slot_size - used;
+}
+
+static bool app_store_flash_read_locked(uint32_t addr, void *out, uint32_t size)
+{
+    if ((out == NULL) || (size == 0u))
+    {
+        return false;
+    }
+    if ((s_norHandle.driverBaseAddr == NULL) || (addr + size > s_usable_size))
+    {
+        return false;
+    }
+    return (Nor_Flash_Read(&s_norHandle, addr, (uint8_t *)out, size) == kStatus_Success);
+}
+
+static bool app_store_flash_prog_locked(uint32_t addr, const void *data, uint32_t size)
+{
+    if ((data == NULL) || (size == 0u))
+    {
+        return false;
+    }
+    if ((s_norHandle.driverBaseAddr == NULL) || (addr + size > s_usable_size))
+    {
+        return false;
+    }
+    if (Nor_Flash_Program(&s_norHandle, addr, (uint8_t *)(uintptr_t)data, size) != kStatus_Success)
+    {
+        return false;
+    }
+    return (app_store_wait_ready(2000u) == 0);
+}
+
+static bool app_store_flash_erase_sector_locked(uint32_t addr)
+{
+    if ((s_norHandle.driverBaseAddr == NULL) || (s_sector_size == 0u))
+    {
+        return false;
+    }
+    const uint32_t base = (addr / s_sector_size) * s_sector_size;
+    if (base >= s_usable_size)
+    {
+        return false;
+    }
+    if (Nor_Flash_Erase_Sector(&s_norHandle, base) != kStatus_Success)
+    {
+        return false;
+    }
+    return (app_store_wait_ready(5000u) == 0);
+}
+
+static bool app_store_header_read_locked(uint8_t slot, app_store_header_t *out)
+{
+    if (out == NULL)
+    {
+        return false;
+    }
+    (void)memset(out, 0, sizeof(*out));
+    if (!app_store_flash_read_locked(app_store_slot_base(slot), out, (uint32_t)sizeof(*out)))
+    {
+        return false;
+    }
+    if (out->magic != APP_STORE_MAGIC)
+    {
+        return false;
+    }
+    if (out->version != APP_STORE_VERSION)
+    {
+        return false;
+    }
+
+    BSP_CRC_Init();
+    const uint32_t crc = BSP_CRC_Calculate(&out->version, sizeof(*out) - 8u, BSP_CRC_WIDTH_32);
+    if (crc != out->header_crc)
+    {
+        return false;
+    }
+    return true;
+}
+
+static bool app_store_header_write_locked(uint8_t slot, uint64_t task_id, const app_storage_task_meta_t *meta)
+{
+    const uint32_t base = app_store_slot_base(slot);
+    if (!app_store_flash_erase_sector_locked(base))
+    {
+        return false;
+    }
+
+    app_store_header_t h;
+    (void)memset(&h, 0xFF, sizeof(h));
+    h.magic   = APP_STORE_MAGIC;
+    h.version = APP_STORE_VERSION;
+    h.task_id = task_id;
+    if (meta != NULL)
+    {
+        h.meta = *meta;
+    }
+    BSP_CRC_Init();
+    h.header_crc = BSP_CRC_Calculate(&h.version, sizeof(h) - 8u, BSP_CRC_WIDTH_32);
+
+    const uint32_t off_after_magic = 4u;
+    if (!app_store_flash_prog_locked(base + off_after_magic, ((const uint8_t *)&h) + off_after_magic, (uint32_t)sizeof(h) - off_after_magic))
+    {
+        return false;
+    }
+
+    if (!app_store_flash_prog_locked(base, &h.magic, (uint32_t)sizeof(h.magic)))
+    {
+        return false;
+    }
+    return true;
+}
+
+static uint32_t app_store_scan_committed_size_locked(uint32_t base, uint32_t capacity, uint32_t record_size)
+{
+    if ((record_size == 0u) || (capacity < record_size))
+    {
+        return 0u;
+    }
+
+    uint32_t pos = 0u;
+    uint8_t buf[256];
+    while (pos < capacity)
+    {
+        uint32_t chunk = capacity - pos;
+        if (chunk > (uint32_t)sizeof(buf))
+        {
+            chunk = (uint32_t)sizeof(buf);
+        }
+        if (!app_store_flash_read_locked(base + pos, buf, chunk))
+        {
+            break;
+        }
+
+        uint32_t next = (pos / record_size) * record_size;
+        if (next < pos)
+        {
+            next += record_size;
+        }
+        while ((next + 4u) <= (pos + chunk))
+        {
+            const uint32_t i = next - pos;
+            bool erased = true;
+            for (uint32_t k = 0u; k < 4u; k++)
+            {
+                if (buf[i + k] != 0xFFu)
+                {
+                    erased = false;
+                    break;
+                }
+            }
+            if (erased)
+            {
+                return next;
+            }
+            next += record_size;
+        }
+
+        pos += chunk;
+    }
+
+    return (capacity / record_size) * record_size;
+}
+
+static bool app_store_ensure_erased_range_locked(uint32_t *next_erase, uint32_t addr, uint32_t size)
+{
+    if ((next_erase == NULL) || (s_sector_size == 0u) || (size == 0u))
+    {
+        return false;
+    }
+    const uint32_t end = addr + size - 1u;
+    while (*next_erase <= end)
+    {
+        if (!app_store_flash_erase_sector_locked(*next_erase))
+        {
+            return false;
+        }
+        *next_erase += s_sector_size;
+    }
+    return true;
+}
+
+static bool app_store_open_locked(uint64_t task_id, bool create, const app_storage_task_meta_t *meta)
+{
+    if (s_active.valid && (s_active.task_id == task_id))
+    {
+        return true;
+    }
+
+    uint8_t found_slot = 0xFFu;
+    app_store_header_t h;
+    for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+    {
+        if (app_store_header_read_locked(slot, &h) && (h.task_id == task_id))
+        {
+            found_slot = slot;
+            break;
+        }
+    }
+
+    if ((found_slot == 0xFFu) && create)
+    {
+        for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+        {
+            if (!app_store_header_read_locked(slot, &h))
+            {
+                found_slot = slot;
+                break;
+            }
+        }
+        if (found_slot == 0xFFu)
+        {
+            found_slot = 0u;
+        }
+
+        if (!app_store_header_write_locked(found_slot, task_id, meta))
+        {
+            return false;
+        }
+
+        (void)app_store_flash_erase_sector_locked(app_store_pre_base(found_slot));
+        (void)app_store_flash_erase_sector_locked(app_store_data_base(found_slot));
+    }
+
+    if (found_slot == 0xFFu)
+    {
+        return false;
+    }
+
+    if (!app_store_header_read_locked(found_slot, &h))
+    {
+        return false;
+    }
+
+    uint32_t record_size = h.meta.record_size;
+    if ((record_size < 4u) || (record_size > 256u))
+    {
+        record_size = 18u;
+    }
+
+    const uint32_t pre_base = app_store_pre_base(found_slot);
+    const uint32_t data_base = app_store_data_base(found_slot);
+    const uint32_t pre_cap = app_store_pre_capacity();
+    const uint32_t data_cap = app_store_data_capacity();
+
+    s_active.valid = true;
+    s_active.slot = found_slot;
+    s_active.task_id = task_id;
+    s_active.pre_size = app_store_scan_committed_size_locked(pre_base, pre_cap, record_size);
+    s_active.data_size = app_store_scan_committed_size_locked(data_base, data_cap, record_size);
+
+    s_active.pre_next_erase = pre_base + ((s_active.pre_size + s_sector_size - 1u) / s_sector_size) * s_sector_size;
+    s_active.data_next_erase = data_base + ((s_active.data_size + s_sector_size - 1u) / s_sector_size) * s_sector_size;
+    return true;
 }
 
 bool APP_Storage_Init(void)
 {
-    return BSP_FS_Init();
+    bool ok = false;
+    app_store_lock();
+    ok = app_store_flash_init_locked();
+    app_store_unlock();
+    return ok;
+}
+
+bool APP_Storage_EraseAll(void)
+{
+    app_store_lock();
+    if (!app_store_flash_init_locked())
+    {
+        app_store_unlock();
+        return false;
+    }
+
+    for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+    {
+        const uint32_t base = app_store_slot_base(slot);
+        (void)app_store_flash_erase_sector_locked(base);
+        (void)app_store_flash_erase_sector_locked(app_store_pre_base(slot));
+        (void)app_store_flash_erase_sector_locked(app_store_data_base(slot));
+    }
+    (void)memset(&s_active, 0, sizeof(s_active));
+    app_store_unlock();
+    return true;
 }
 
 bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta)
@@ -44,309 +483,330 @@ bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta
 
 bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *meta, app_storage_phase_t phase)
 {
-    char dir[APP_STORAGE_DIR_MAX];
-    char metaPath[APP_STORAGE_PATH_MAX];
-    char dataPath[APP_STORAGE_PATH_MAX];
-    char preDataPath[APP_STORAGE_PATH_MAX];
-    char logPath[APP_STORAGE_PATH_MAX];
+    (void)phase;
 
-    if (!BSP_FS_IsMounted())
+    app_store_lock();
+    if (!app_store_flash_init_locked())
     {
-        BSP_UART_Print("[STO] BeginTask: FS not mounted\r\n");
+        app_store_unlock();
         return false;
     }
-
-    app_storage_task_dir(dir, task_id);
-    const int mkerr = BSP_FS_Mkdir(dir);
-    if (mkerr != 0)
+    const bool ok = app_store_open_locked(task_id, true, meta);
+    app_store_unlock();
+    if (ok)
     {
-        BSP_UART_Print("[STO] BeginTask: mkdir failed: %s err=%d\r\n", dir, mkerr);
-        return false;
+        BSP_UART_Print("[STO] BeginTask ok\r\n");
     }
-
-    if (phase == APP_STORAGE_PHASE_PRETEST)
-    {
-        app_storage_task_path(preDataPath, task_id, "pre_data.bin");
-        (void)BSP_FS_Remove(preDataPath);
-    }
-    else
-    {
-        app_storage_task_path(dataPath, task_id, "data.bin");
-        (void)BSP_FS_Remove(dataPath);
-    }
-
-    app_storage_task_path(logPath, task_id, "sys.log");
-    (void)BSP_FS_Remove(logPath);
-    {
-        const char *init_line = "[SYS] start\n";
-        (void)BSP_FS_FileAppend(logPath, init_line, (uint32_t)strlen(init_line));
-    }
-
-    if (meta != NULL)
-    {
-        app_storage_task_path(metaPath, task_id, "meta.bin");
-        const int werr = BSP_FS_FileWriteTruncate(metaPath, meta, (uint32_t)sizeof(*meta));
-        if (werr != 0)
-        {
-            BSP_UART_Print("[STO] BeginTask: write meta failed: %s err=%d\r\n", metaPath, werr);
-            return false;
-        }
-    }
-
-    BSP_UART_Print("[STO] BeginTask ok(%s): %s\r\n",
-                   (phase == APP_STORAGE_PHASE_PRETEST) ? "pre" : "formal",
-                   dir);
-    return true;
+    return ok;
 }
 
 bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t record_size)
 {
-    char dataPath[APP_STORAGE_PATH_MAX];
-
-    if ((record == NULL) || (record_size == 0U) || (!BSP_FS_IsMounted()))
+    if ((record == NULL) || (record_size == 0u) || (record_size < 4u))
     {
         return false;
     }
 
-    app_storage_task_path(dataPath, task_id, "data.bin");
-    const int err = BSP_FS_FileAppend(dataPath, record, record_size);
-    if (err != 0)
+    bool ok = false;
+    app_store_lock();
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
     {
-        BSP_UART_Print("[STO] AppendData failed: %s size=%u err=%d\r\n", dataPath, (unsigned)record_size, err);
-        return false;
+        const uint32_t base = app_store_data_base(s_active.slot);
+        const uint32_t cap  = app_store_data_capacity();
+        if (s_active.data_size + record_size <= cap)
+        {
+            const uint32_t addr = base + s_active.data_size;
+            if (app_store_ensure_erased_range_locked(&s_active.data_next_erase, addr, record_size))
+            {
+                ok = app_store_flash_prog_locked(addr + 4u, ((const uint8_t *)record) + 4u, record_size - 4u) &&
+                     app_store_flash_prog_locked(addr, record, 4u);
+                if (ok)
+                {
+                    s_active.data_size += record_size;
+                }
+            }
+        }
     }
-    return true;
+    app_store_unlock();
+    if (!ok)
+    {
+        BSP_UART_Print("[STO] AppendData failed\r\n");
+    }
+    return ok;
 }
 
 bool APP_Storage_AppendPreData(uint64_t task_id, const void *record, uint32_t record_size)
 {
-    char dataPath[APP_STORAGE_PATH_MAX];
-
-    if ((record == NULL) || (record_size == 0U) || (!BSP_FS_IsMounted()))
+    if ((record == NULL) || (record_size == 0u) || (record_size < 4u))
     {
         return false;
     }
 
-    app_storage_task_path(dataPath, task_id, "pre_data.bin");
-    const int err = BSP_FS_FileAppend(dataPath, record, record_size);
-    if (err != 0)
+    bool ok = false;
+    app_store_lock();
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
     {
-        BSP_UART_Print("[STO] AppendPreData failed: %s size=%u err=%d\r\n", dataPath, (unsigned)record_size, err);
-        return false;
+        const uint32_t base = app_store_pre_base(s_active.slot);
+        const uint32_t cap  = app_store_pre_capacity();
+        if (s_active.pre_size + record_size <= cap)
+        {
+            const uint32_t addr = base + s_active.pre_size;
+            if (app_store_ensure_erased_range_locked(&s_active.pre_next_erase, addr, record_size))
+            {
+                ok = app_store_flash_prog_locked(addr + 4u, ((const uint8_t *)record) + 4u, record_size - 4u) &&
+                     app_store_flash_prog_locked(addr, record, 4u);
+                if (ok)
+                {
+                    s_active.pre_size += record_size;
+                }
+            }
+        }
     }
-    return true;
+    app_store_unlock();
+    if (!ok)
+    {
+        BSP_UART_Print("[STO] AppendPreData failed\r\n");
+    }
+    return ok;
 }
 
 bool APP_Storage_AppendLog(uint64_t task_id, const void *data, uint32_t size)
 {
-    char logPath[APP_STORAGE_PATH_MAX];
-
-    if ((data == NULL) || (size == 0U) || (!BSP_FS_IsMounted()))
-    {
-        return false;
-    }
-
-    app_storage_task_path(logPath, task_id, "sys.log");
-    return (BSP_FS_FileAppend(logPath, data, size) == 0);
+    (void)task_id;
+    (void)data;
+    (void)size;
+    return false;
 }
 
 bool APP_Storage_LogPrintf(uint64_t task_id, const char *format, ...)
 {
-    char buf[APP_STORAGE_LOG_BUF_MAX];
-    va_list args;
-
-    if ((format == NULL) || (!BSP_FS_IsMounted()))
-    {
-        return false;
-    }
-
-    va_start(args, format);
-    const int n = vsnprintf(buf, (size_t)sizeof(buf), format, args);
-    va_end(args);
-
-    if (n <= 0)
-    {
-        return false;
-    }
-
-    uint32_t size = (uint32_t)n;
-    if (size >= (uint32_t)sizeof(buf))
-    {
-        size = (uint32_t)sizeof(buf) - 1U;
-    }
-
-    if ((size > 0U) && (buf[size - 1U] != '\n') && (size < ((uint32_t)sizeof(buf) - 1U)))
-    {
-        buf[size] = '\n';
-        size++;
-    }
-
-    return APP_Storage_AppendLog(task_id, buf, size);
+    (void)task_id;
+    (void)format;
+    return false;
 }
 
 int APP_Storage_ReadLog(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
 {
-    char logPath[APP_STORAGE_PATH_MAX];
-
-    if ((out == NULL) || (size == 0U) || (!BSP_FS_IsMounted()))
-    {
-        return -1;
-    }
-
-    app_storage_task_path(logPath, task_id, "sys.log");
-    return BSP_FS_FileReadAt(logPath, offset, out, size);
+    (void)task_id;
+    (void)offset;
+    (void)out;
+    (void)size;
+    return -1;
 }
 
 bool APP_Storage_GetLogSize(uint64_t task_id, uint32_t *out_size)
 {
-    char logPath[APP_STORAGE_PATH_MAX];
-
-    if ((out_size == NULL) || (!BSP_FS_IsMounted()))
+    (void)task_id;
+    if (out_size != NULL)
     {
-        return false;
+        *out_size = 0u;
     }
-
-    app_storage_task_path(logPath, task_id, "sys.log");
-    const int err = BSP_FS_FileSize(logPath, out_size);
-    if (err == 0)
-    {
-        return true;
-    }
-    if (err == -2)
-    {
-        *out_size = 0U;
-        return true;
-    }
-    return false;
+    return true;
 }
 
 int APP_Storage_ReadData(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
 {
-    char dataPath[APP_STORAGE_PATH_MAX];
-
-    if ((out == NULL) || (size == 0U) || (!BSP_FS_IsMounted()))
+    if ((out == NULL) || (size == 0u))
     {
         return -1;
     }
-
-    app_storage_task_path(dataPath, task_id, "data.bin");
-    return BSP_FS_FileReadAt(dataPath, offset, out, size);
+    int ret = -1;
+    app_store_lock();
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
+    {
+        if (offset < s_active.data_size)
+        {
+            uint32_t to_read = size;
+            if (offset + to_read > s_active.data_size)
+            {
+                to_read = s_active.data_size - offset;
+            }
+            const uint32_t base = app_store_data_base(s_active.slot);
+            if (app_store_flash_read_locked(base + offset, out, to_read))
+            {
+                ret = (int)to_read;
+            }
+        }
+        else
+        {
+            ret = 0;
+        }
+    }
+    app_store_unlock();
+    return ret;
 }
 
 int APP_Storage_ReadPreData(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
 {
-    char dataPath[APP_STORAGE_PATH_MAX];
-
-    if ((out == NULL) || (size == 0U) || (!BSP_FS_IsMounted()))
+    if ((out == NULL) || (size == 0u))
     {
         return -1;
     }
-
-    app_storage_task_path(dataPath, task_id, "pre_data.bin");
-    return BSP_FS_FileReadAt(dataPath, offset, out, size);
+    int ret = -1;
+    app_store_lock();
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
+    {
+        if (offset < s_active.pre_size)
+        {
+            uint32_t to_read = size;
+            if (offset + to_read > s_active.pre_size)
+            {
+                to_read = s_active.pre_size - offset;
+            }
+            const uint32_t base = app_store_pre_base(s_active.slot);
+            if (app_store_flash_read_locked(base + offset, out, to_read))
+            {
+                ret = (int)to_read;
+            }
+        }
+        else
+        {
+            ret = 0;
+        }
+    }
+    app_store_unlock();
+    return ret;
 }
 
 int APP_Storage_ReadMeta(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
 {
-    char metaPath[APP_STORAGE_PATH_MAX];
-
-    if ((out == NULL) || (size == 0U) || (!BSP_FS_IsMounted()))
+    if ((out == NULL) || (size == 0u))
     {
         return -1;
     }
 
-    app_storage_task_path(metaPath, task_id, "meta.bin");
-    return BSP_FS_FileReadAt(metaPath, offset, out, size);
+    int ret = -1;
+    app_store_lock();
+    if (app_store_flash_init_locked())
+    {
+        app_store_header_t h;
+        bool found = false;
+        uint8_t found_slot = 0u;
+        for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+        {
+            if (app_store_header_read_locked(slot, &h) && (h.task_id == task_id))
+            {
+                found = true;
+                found_slot = slot;
+                break;
+            }
+        }
+        if (found)
+        {
+            const uint32_t meta_off = (uint32_t)offsetof(app_store_header_t, meta);
+            const uint32_t meta_sz = (uint32_t)sizeof(app_storage_task_meta_t);
+            if (offset < meta_sz)
+            {
+                uint32_t to_read = size;
+                if (offset + to_read > meta_sz)
+                {
+                    to_read = meta_sz - offset;
+                }
+                const uint32_t base = app_store_slot_base(found_slot);
+                if (app_store_flash_read_locked(base + meta_off + offset, out, to_read))
+                {
+                    ret = (int)to_read;
+                }
+            }
+            else
+            {
+                ret = 0;
+            }
+        }
+        else
+        {
+            ret = 0;
+        }
+    }
+    app_store_unlock();
+    return ret;
 }
 
 bool APP_Storage_GetDataSize(uint64_t task_id, uint32_t *out_size)
 {
-    char dataPath[APP_STORAGE_PATH_MAX];
-
-    if ((out_size == NULL) || (!BSP_FS_IsMounted()))
+    if (out_size == NULL)
     {
         return false;
     }
-
-    app_storage_task_path(dataPath, task_id, "data.bin");
-    const int err = BSP_FS_FileSize(dataPath, out_size);
-    if (err == 0)
+    bool ok = false;
+    app_store_lock();
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
     {
-        return true;
+        *out_size = s_active.data_size;
+        ok = true;
     }
-    if (err == -2)
-    {
-        *out_size = 0U;
-        return true;
-    }
-    return false;
+    app_store_unlock();
+    return ok;
 }
 
 bool APP_Storage_GetPreDataSize(uint64_t task_id, uint32_t *out_size)
 {
-    char dataPath[APP_STORAGE_PATH_MAX];
-
-    if ((out_size == NULL) || (!BSP_FS_IsMounted()))
+    if (out_size == NULL)
     {
         return false;
     }
-
-    app_storage_task_path(dataPath, task_id, "pre_data.bin");
-    const int err = BSP_FS_FileSize(dataPath, out_size);
-    if (err == 0)
+    bool ok = false;
+    app_store_lock();
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
     {
-        return true;
+        *out_size = s_active.pre_size;
+        ok = true;
     }
-    if (err == -2)
-    {
-        *out_size = 0U;
-        return true;
-    }
-    return false;
+    app_store_unlock();
+    return ok;
 }
 
 bool APP_Storage_GetMetaSize(uint64_t task_id, uint32_t *out_size)
 {
-    char metaPath[APP_STORAGE_PATH_MAX];
-
-    if ((out_size == NULL) || (!BSP_FS_IsMounted()))
+    if (out_size == NULL)
     {
         return false;
     }
-
-    app_storage_task_path(metaPath, task_id, "meta.bin");
-    const int err = BSP_FS_FileSize(metaPath, out_size);
-    if (err == 0)
+    bool ok = false;
+    app_store_lock();
+    if (app_store_flash_init_locked())
     {
-        return true;
+        app_store_header_t h;
+        bool found = false;
+        for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+        {
+            if (app_store_header_read_locked(slot, &h) && (h.task_id == task_id))
+            {
+                found = true;
+                break;
+            }
+        }
+        *out_size = found ? (uint32_t)sizeof(app_storage_task_meta_t) : 0u;
+        ok = true;
     }
-    if (err == -2)
-    {
-        *out_size = 0U;
-        return true;
-    }
-    return false;
+    app_store_unlock();
+    return ok;
 }
 
 bool APP_Storage_DeleteTask(uint64_t task_id)
 {
-    char dir[APP_STORAGE_DIR_MAX];
-    char p[APP_STORAGE_PATH_MAX];
-
-    if (!BSP_FS_IsMounted())
+    bool ok = false;
+    app_store_lock();
+    if (app_store_flash_init_locked())
     {
-        return false;
+        app_store_header_t h;
+        for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+        {
+            if (app_store_header_read_locked(slot, &h) && (h.task_id == task_id))
+            {
+                const uint32_t base = app_store_slot_base(slot);
+                (void)app_store_flash_erase_sector_locked(base);
+                (void)app_store_flash_erase_sector_locked(app_store_pre_base(slot));
+                (void)app_store_flash_erase_sector_locked(app_store_data_base(slot));
+                if (s_active.valid && (s_active.task_id == task_id))
+                {
+                    (void)memset(&s_active, 0, sizeof(s_active));
+                }
+                ok = true;
+                break;
+            }
+        }
     }
-
-    app_storage_task_path(p, task_id, "data.bin");
-    (void)BSP_FS_Remove(p);
-    app_storage_task_path(p, task_id, "pre_data.bin");
-    (void)BSP_FS_Remove(p);
-    app_storage_task_path(p, task_id, "sys.log");
-    (void)BSP_FS_Remove(p);
-    app_storage_task_path(p, task_id, "meta.bin");
-    (void)BSP_FS_Remove(p);
-
-    app_storage_task_dir(dir, task_id);
-    return (BSP_FS_Remove(dir) == 0);
+    app_store_unlock();
+    return ok;
 }

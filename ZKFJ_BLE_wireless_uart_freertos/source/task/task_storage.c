@@ -4,143 +4,14 @@
 
 #include "app_global.h"
 #include "app_storage.h"
-#include "bsp_fs.h"
 #include "bsp_uart.h"
 #include "task.h"
-
-#ifndef TASK_STORAGE_VERIFY_READBACK_ENABLE
-#define TASK_STORAGE_VERIFY_READBACK_ENABLE 0
-#endif
 
 static bool s_storage_ready;
 static uint64_t s_storage_task_id;
 static uint32_t s_storage_task_gen;
 static TickType_t s_next_retry_tick;
 static TickType_t s_last_begin_log_tick;
-static bool s_logged_first_write;
-static uint32_t s_verify_ok_count;
-static uint32_t s_verify_fail_count;
-static uint32_t s_verify_total_count;
-static bsp_fs_diag_t s_last_fs_diag;
-static bool s_last_fs_diag_valid;
-
-#if TASK_STORAGE_VERIFY_READBACK_ENABLE
-static void task_storage_print_record(const char *tag, const sensor_record_t *r)
-{
-    if ((tag == NULL) || (r == NULL))
-    {
-        return;
-    }
-    BSP_UART_Print("[STO] %s ts=%u.%03u temp=%d press=%u lvl=%u rem=%u acc=%u st=0x%02X\r\n",
-                   tag,
-                   (unsigned)r->timestamp_s,
-                   (unsigned)r->timestamp_ms,
-                   (int)r->temperature_centi_c,
-                   (unsigned)r->pressure_kpa,
-                   (unsigned)r->liquid_level,
-                   (unsigned)r->remaining_count,
-                   (unsigned)r->liquid_access_state,
-                   (unsigned)r->status);
-}
-
-static void task_storage_print_hex18(const char *tag, const uint8_t *p)
-{
-    if ((tag == NULL) || (p == NULL))
-    {
-        return;
-    }
-    BSP_UART_Print("[STO] %s %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\r\n",
-                   tag,
-                   (unsigned)p[0], (unsigned)p[1], (unsigned)p[2], (unsigned)p[3], (unsigned)p[4], (unsigned)p[5],
-                   (unsigned)p[6], (unsigned)p[7], (unsigned)p[8], (unsigned)p[9], (unsigned)p[10], (unsigned)p[11],
-                   (unsigned)p[12], (unsigned)p[13], (unsigned)p[14], (unsigned)p[15], (unsigned)p[16], (unsigned)p[17]);
-}
-
-static void task_storage_verify_tail(uint64_t task_id, bool pretest, const sensor_record_t *expected)
-{
-    if (expected == NULL)
-    {
-        return;
-    }
-
-    uint32_t size = 0U;
-    bool ok = false;
-    if (pretest)
-    {
-        ok = APP_Storage_GetPreDataSize(task_id, &size);
-    }
-    else
-    {
-        ok = APP_Storage_GetDataSize(task_id, &size);
-    }
-
-    if (!ok)
-    {
-        s_verify_fail_count++;
-        BSP_UART_Print("[STO] VerifyTail failed: size query (%s)\r\n", pretest ? "pre" : "formal");
-        (void)APP_Storage_LogPrintf(task_id, "[STO] VerifyTail failed: size query (%s)\n", pretest ? "pre" : "formal");
-        return;
-    }
-
-    if (size < (uint32_t)sizeof(sensor_record_t))
-    {
-        s_verify_fail_count++;
-        BSP_UART_Print("[STO] VerifyTail failed: size too small=%u (%s)\r\n", (unsigned)size, pretest ? "pre" : "formal");
-        (void)APP_Storage_LogPrintf(task_id, "[STO] VerifyTail failed: size too small=%u (%s)\n", (unsigned)size, pretest ? "pre" : "formal");
-        return;
-    }
-
-    const uint32_t off = size - (uint32_t)sizeof(sensor_record_t);
-    sensor_record_t actual;
-    int nread = -1;
-    if (pretest)
-    {
-        nread = APP_Storage_ReadPreData(task_id, off, &actual, (uint32_t)sizeof(actual));
-    }
-    else
-    {
-        nread = APP_Storage_ReadData(task_id, off, &actual, (uint32_t)sizeof(actual));
-    }
-
-    if (nread != (int)sizeof(actual))
-    {
-        s_verify_fail_count++;
-        BSP_UART_Print("[STO] VerifyTail failed: read ret=%d off=%u (%s)\r\n", nread, (unsigned)off, pretest ? "pre" : "formal");
-        (void)APP_Storage_LogPrintf(task_id, "[STO] VerifyTail failed: read ret=%d off=%u (%s)\n",
-                                    nread, (unsigned)off, pretest ? "pre" : "formal");
-        return;
-    }
-
-    if (memcmp(&actual, expected, sizeof(actual)) != 0)
-    {
-        s_verify_fail_count++;
-        BSP_UART_Print("[STO] VerifyTail mismatch off=%u (%s)\r\n", (unsigned)off, pretest ? "pre" : "formal");
-        task_storage_print_record("exp", expected);
-        task_storage_print_record("act", &actual);
-        task_storage_print_hex18("exp_hex", (const uint8_t *)expected);
-        task_storage_print_hex18("act_hex", (const uint8_t *)&actual);
-        (void)APP_Storage_LogPrintf(task_id,
-                                    "[STO] VerifyTail mismatch off=%u (%s) exp_ts=%u.%03u act_ts=%u.%03u exp_rem=%u act_rem=%u\n",
-                                    (unsigned)off,
-                                    pretest ? "pre" : "formal",
-                                    (unsigned)expected->timestamp_s,
-                                    (unsigned)expected->timestamp_ms,
-                                    (unsigned)actual.timestamp_s,
-                                    (unsigned)actual.timestamp_ms,
-                                    (unsigned)expected->remaining_count,
-                                    (unsigned)actual.remaining_count);
-        return;
-    }
-
-    s_verify_ok_count++;
-    if (s_verify_total_count <= 5U)
-    {
-        BSP_UART_Print("[STO] VerifyTail ok off=%u (%s)\r\n", (unsigned)off, pretest ? "pre" : "formal");
-    }
-}
-#endif
-
-
 static bool task_storage_begin_if_needed(uint64_t task_id)
 {
     if (s_storage_ready)
@@ -155,17 +26,6 @@ static bool task_storage_begin_if_needed(uint64_t task_id)
         {
             s_last_begin_log_tick = now;
             BSP_UART_Print("[STO] Init failed\r\n");
-            bsp_fs_diag_t diag;
-            BSP_FS_GetDiag(&diag, false);
-            BSP_UART_Print("[FS_DIAG] noent=%u/%u open_io=%u prog_mis=%u/%u erase_mis=%u/%u io=%u\r\n",
-                           (unsigned)diag.fileappend_open_noent,
-                           (unsigned)diag.fileappend_open_noent_recovered,
-                           (unsigned)diag.fileappend_open_io,
-                           (unsigned)diag.prog_verify_mismatch,
-                           (unsigned)diag.prog_verify_recovered,
-                           (unsigned)diag.erase_verify_failed,
-                           (unsigned)diag.erase_verify_recovered,
-                           (unsigned)diag.io_error);
         }
         return false;
     }
@@ -184,13 +44,6 @@ static bool task_storage_begin_if_needed(uint64_t task_id)
     {
         s_storage_ready = true;
         s_storage_task_gen = TASK_GetTaskGeneration();
-        s_logged_first_write = false;
-        s_verify_ok_count = 0U;
-        s_verify_fail_count = 0U;
-        s_verify_total_count = 0U;
-        (void)memset(&s_last_fs_diag, 0, sizeof(s_last_fs_diag));
-        BSP_FS_GetDiag(NULL, true);
-        s_last_fs_diag_valid = true;
         if (g_system_event_group != NULL)
         {
             (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
@@ -285,50 +138,7 @@ void TASK_StorageTask(void *pvParameters)
                 const bool ok = pre ?
                                     APP_Storage_AppendPreData(s_storage_task_id, &record, (uint32_t)sizeof(record)) :
                                     APP_Storage_AppendData(s_storage_task_id, &record, (uint32_t)sizeof(record));
-                if (ok && (!s_logged_first_write))
-                {
-                    s_logged_first_write = true;
-                    BSP_UART_Print("[STO] First write ok\r\n");
-                }
-
-#if TASK_STORAGE_VERIFY_READBACK_ENABLE
-                if (ok)
-                {
-                    s_verify_total_count++;
-                    if ((s_verify_total_count <= 5U) || ((s_verify_total_count & 0x1FU) == 0U))
-                    {
-                        task_storage_verify_tail(s_storage_task_id, pre, &record);
-                    }
-                }
-#endif
-
-                bsp_fs_diag_t diag;
-                BSP_FS_GetDiag(&diag, false);
-                if (!s_last_fs_diag_valid ||
-                    (memcmp(&diag, &s_last_fs_diag, sizeof(diag)) != 0))
-                {
-                    BSP_UART_Print("[FS_DIAG] noent=%u/%u open_io=%u prog_mis=%u/%u erase_mis=%u/%u io=%u\r\n",
-                                   (unsigned)diag.fileappend_open_noent,
-                                   (unsigned)diag.fileappend_open_noent_recovered,
-                                   (unsigned)diag.fileappend_open_io,
-                                   (unsigned)diag.prog_verify_mismatch,
-                                   (unsigned)diag.prog_verify_recovered,
-                                   (unsigned)diag.erase_verify_failed,
-                                   (unsigned)diag.erase_verify_recovered,
-                                   (unsigned)diag.io_error);
-                    (void)APP_Storage_LogPrintf(s_storage_task_id,
-                                                "[FS_DIAG] noent=%u/%u open_io=%u prog_mis=%u/%u erase_mis=%u/%u io=%u\n",
-                                                (unsigned)diag.fileappend_open_noent,
-                                                (unsigned)diag.fileappend_open_noent_recovered,
-                                                (unsigned)diag.fileappend_open_io,
-                                                (unsigned)diag.prog_verify_mismatch,
-                                                (unsigned)diag.prog_verify_recovered,
-                                                (unsigned)diag.erase_verify_failed,
-                                                (unsigned)diag.erase_verify_recovered,
-                                                (unsigned)diag.io_error);
-                    s_last_fs_diag = diag;
-                    s_last_fs_diag_valid = true;
-                }
+                (void)ok;
             }
         }
     }

@@ -40,6 +40,7 @@ typedef enum
 
 // 初始化存储
 bool APP_Storage_Init(void);
+bool APP_Storage_EraseAll(void);
 // 开始任务
 bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta);
 bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *meta, app_storage_phase_t phase);
