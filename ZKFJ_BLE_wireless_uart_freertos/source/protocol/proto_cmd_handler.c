@@ -403,6 +403,13 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
     uint8_t frame_buf[1 + 2 + 8 + 4 + 4 + 200 + 2];
     proto_send_ack(msg->cmd, PROTO_STATUS_OK);
     TASK_SetHistorySending(true);
+    {
+        size_t out_len = 0U;
+        if (PROTO_DataBuildFrame(task_id, offset, total_bytes, NULL, 0U, frame_buf, sizeof(frame_buf), &out_len))
+        {
+            proto_send(frame_buf, out_len);
+        }
+    }
 
     while (offset < total_bytes)
     {
@@ -448,6 +455,15 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
         proto_send(frame_buf, out_len);
         offset += (uint32_t)nread;
         vTaskDelay(pdMS_TO_TICKS(5U));
+    }
+
+    if (s_ble_connected && (offset >= total_bytes))
+    {
+        size_t out_len = 0U;
+        if (PROTO_DataBuildFrame(task_id, total_bytes, total_bytes, NULL, 0U, frame_buf, sizeof(frame_buf), &out_len))
+        {
+            proto_send(frame_buf, out_len);
+        }
     }
 
     TASK_SetHistorySending(false);
