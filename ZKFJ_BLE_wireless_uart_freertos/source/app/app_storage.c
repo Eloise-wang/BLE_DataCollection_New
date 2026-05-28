@@ -128,6 +128,7 @@ static void app_store_flash_recover_locked(void)
     s_norCfg.memControlConfig = &s_memCfg;
     s_norCfg.driverBaseAddr   = NULL;
     (void)Nor_Flash_Init(&s_norCfg, &s_norHandle);
+    OSA_TimeDelay(1u);
 }
 
 static void app_store_lock(void)

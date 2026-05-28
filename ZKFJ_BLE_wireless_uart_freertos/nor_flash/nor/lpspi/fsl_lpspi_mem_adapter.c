@@ -39,6 +39,7 @@ extern void BOARD_LpspiPcsPinControl(bool isSelected);
 extern void BOARD_LpspiIomuxConfig(spi_pin_mode_t pinMode);
 
 static status_t LPSPI_MemWaitBusy(LPSPI_Type *base);
+static status_t LPSPI_MemWaitModuleIdle(LPSPI_Type *base);
 
 /*******************************************************************************
  * Codes
@@ -101,7 +102,12 @@ status_t LPSPI_MemXfer(spi_mem_xfer_t *xfer, LPSPI_Type *base)
                 txXfer.dataSize    = xfer->cmdSize;
                 txXfer.rxData      = NULL;
                 txXfer.configFlags = (uint32_t)kLPSPI_MasterPcs0 | (uint32_t)kLPSPI_MasterPcsContinuous;
-                status             = LPSPI_MasterTransferBlocking(base, &txXfer);
+                status             = LPSPI_MemWaitModuleIdle(base);
+                if (status != kStatus_Success)
+                {
+                    break;
+                }
+                status = LPSPI_MasterTransferBlocking(base, &txXfer);
             }
             break;
             case kSpiMem_Xfer_CommandWriteData:
@@ -116,7 +122,17 @@ status_t LPSPI_MemXfer(spi_mem_xfer_t *xfer, LPSPI_Type *base)
                 dataXfer.dataSize    = xfer->dataSize;
                 dataXfer.rxData      = NULL;
                 dataXfer.configFlags = (uint32_t)kLPSPI_MasterPcs0 | (uint32_t)kLPSPI_MasterPcsContinuous;
-                status               = LPSPI_MasterTransferBlocking(base, &cmdXfer);
+                status               = LPSPI_MemWaitModuleIdle(base);
+                if (status != kStatus_Success)
+                {
+                    break;
+                }
+                status = LPSPI_MasterTransferBlocking(base, &cmdXfer);
+                if (status != kStatus_Success)
+                {
+                    break;
+                }
+                status = LPSPI_MemWaitModuleIdle(base);
                 if (status != kStatus_Success)
                 {
                     break;
@@ -136,7 +152,17 @@ status_t LPSPI_MemXfer(spi_mem_xfer_t *xfer, LPSPI_Type *base)
                 dataXfer.dataSize    = xfer->dataSize;
                 dataXfer.rxData      = xfer->data;
                 dataXfer.configFlags = (uint32_t)kLPSPI_MasterPcs0 | (uint32_t)kLPSPI_MasterPcsContinuous;
-                status               = LPSPI_MasterTransferBlocking(base, &cmdXfer);
+                status               = LPSPI_MemWaitModuleIdle(base);
+                if (status != kStatus_Success)
+                {
+                    break;
+                }
+                status = LPSPI_MasterTransferBlocking(base, &cmdXfer);
+                if (status != kStatus_Success)
+                {
+                    break;
+                }
+                status = LPSPI_MemWaitModuleIdle(base);
                 if (status != kStatus_Success)
                 {
                     break;
@@ -259,6 +285,23 @@ static status_t LPSPI_MemWaitBusy(LPSPI_Type *base)
     } while (isBusy);
 
     return status;
+}
+
+static status_t LPSPI_MemWaitModuleIdle(LPSPI_Type *base)
+{
+    if (base == NULL)
+    {
+        return kStatus_InvalidArgument;
+    }
+
+    for (uint32_t i = 0u; i < 200000u; i++)
+    {
+        if ((LPSPI_GetStatusFlags(base) & (uint32_t)kLPSPI_ModuleBusyFlag) == 0u)
+        {
+            return kStatus_Success;
+        }
+    }
+    return kStatus_LPSPI_Timeout;
 }
 
 status_t LPSPI_MemIsBusy(LPSPI_Type *base, bool *isBusy)
@@ -480,7 +523,7 @@ status_t LPSPI_MemDeinit(LPSPI_Type *base)
     do
     {
         // Assert the PCS to high first
-        BOARD_LpspiPcsPinControl(true);
+        BOARD_LpspiPcsPinControl(false);
         // De-initialize LPSPI
         LPSPI_Type *lpspiInstance = base;
         LPSPI_Deinit(lpspiInstance);
