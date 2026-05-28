@@ -11,6 +11,9 @@
 #include "fsl_lpspi.h"
 #endif
 
+#include "bsp_uart.h"
+#include "fsl_os_abstraction.h"
+
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
@@ -40,6 +43,119 @@ extern void BOARD_LpspiIomuxConfig(spi_pin_mode_t pinMode);
 
 static status_t LPSPI_MemWaitBusy(LPSPI_Type *base);
 static status_t LPSPI_MemWaitModuleIdle(LPSPI_Type *base);
+static void LPSPI_MemDbgLog(const char *stage, status_t st, uint8_t cmd0, uint32_t addr, uint32_t len, LPSPI_Type *base);
+
+typedef struct
+{
+    LPSPI_Type *base;
+    uint32_t lastMs;
+    uint32_t suppressed;
+    bool everPrinted;
+} lpspi_dbg_state_t;
+
+#ifndef LPSPI_DBG_STATE_COUNT
+#if defined(FSL_FEATURE_SOC_LPSPI_COUNT) && (FSL_FEATURE_SOC_LPSPI_COUNT > 0)
+#define LPSPI_DBG_STATE_COUNT (FSL_FEATURE_SOC_LPSPI_COUNT)
+#else
+#define LPSPI_DBG_STATE_COUNT (4u)
+#endif
+#endif
+
+static lpspi_dbg_state_t s_lpspiDbgState[LPSPI_DBG_STATE_COUNT];
+static void LPSPI_MemDbgLog(const char *stage, status_t st, uint8_t cmd0, uint32_t addr, uint32_t len, LPSPI_Type *base)
+{
+#if BSP_UART_PRINT_ENABLE
+    const uint32_t now = OSA_TimeGetMsec();
+    uint32_t suppressed = 0u;
+    bool shouldPrint = false;
+
+    OSA_SR_ALLOC();
+    OSA_ENTER_CRITICAL();
+    uint32_t idx = 0u;
+    bool found = false;
+    for (uint32_t i = 0u; i < (uint32_t)(sizeof(s_lpspiDbgState) / sizeof(s_lpspiDbgState[0])); i++)
+    {
+        if (s_lpspiDbgState[i].base == base)
+        {
+            idx = i;
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+    {
+        bool inserted = false;
+        for (uint32_t i = 0u; i < (uint32_t)(sizeof(s_lpspiDbgState) / sizeof(s_lpspiDbgState[0])); i++)
+        {
+            if (s_lpspiDbgState[i].base == NULL)
+            {
+                idx = i;
+                s_lpspiDbgState[i].base = base;
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted)
+        {
+            uint32_t oldestIdx = 0u;
+            uint32_t oldestMs = s_lpspiDbgState[0].lastMs;
+            for (uint32_t i = 1u; i < (uint32_t)(sizeof(s_lpspiDbgState) / sizeof(s_lpspiDbgState[0])); i++)
+            {
+                if (s_lpspiDbgState[i].lastMs <= oldestMs)
+                {
+                    oldestMs = s_lpspiDbgState[i].lastMs;
+                    oldestIdx = i;
+                }
+            }
+            idx = oldestIdx;
+            s_lpspiDbgState[idx].base = base;
+            s_lpspiDbgState[idx].lastMs = 0u;
+            s_lpspiDbgState[idx].suppressed = 0u;
+            s_lpspiDbgState[idx].everPrinted = false;
+        }
+    }
+
+    lpspi_dbg_state_t *s = &s_lpspiDbgState[idx];
+    if (!s->everPrinted)
+    {
+        shouldPrint = true;
+        s->everPrinted = true;
+        s->lastMs = now;
+        suppressed = s->suppressed;
+        s->suppressed = 0u;
+    }
+    else if ((now - s->lastMs) < 2000U)
+    {
+        s->suppressed++;
+        shouldPrint = false;
+    }
+    else
+    {
+        shouldPrint = true;
+        s->lastMs = now;
+        suppressed = s->suppressed;
+        s->suppressed = 0u;
+    }
+    OSA_EXIT_CRITICAL();
+
+    if (!shouldPrint)
+    {
+        return;
+    }
+
+    const uint32_t sr = (base != NULL) ? LPSPI_GetStatusFlags(base) : 0u;
+    BSP_UART_Print("[LPSPI] %s st=%d cmd=0x%02X addr=0x%06lX len=%lu sr=0x%08lX sup=%lu\r\n",
+                   stage, (int)st, (unsigned)cmd0, (unsigned long)addr, (unsigned long)len, (unsigned long)sr,
+                   (unsigned long)suppressed);
+#else
+    (void)stage;
+    (void)st;
+    (void)cmd0;
+    (void)addr;
+    (void)len;
+    (void)base;
+#endif
+}
 
 /*******************************************************************************
  * Codes
@@ -91,6 +207,13 @@ status_t LPSPI_MemXfer(spi_mem_xfer_t *xfer, LPSPI_Type *base)
         }
 
 #if (FSL_FEATURE_SOC_LPSPI_COUNT > 0)
+        const uint8_t cmd0 = (xfer->cmd != NULL && xfer->cmdSize != 0u) ? xfer->cmd[0] : 0u;
+        uint32_t addr24 = 0u;
+        if (xfer->cmd != NULL && xfer->cmdSize >= 4u)
+        {
+            addr24 = ((uint32_t)xfer->cmd[1] << 16) | ((uint32_t)xfer->cmd[2] << 8) | ((uint32_t)xfer->cmd[3]);
+        }
+
         BOARD_LpspiPcsPinControl(true);
 
         switch (xfer->mode)
@@ -105,9 +228,14 @@ status_t LPSPI_MemXfer(spi_mem_xfer_t *xfer, LPSPI_Type *base)
                 status             = LPSPI_MemWaitModuleIdle(base);
                 if (status != kStatus_Success)
                 {
+                    LPSPI_MemDbgLog("WaitIdle(CmdOnly)", status, cmd0, addr24, xfer->cmdSize, base);
                     break;
                 }
                 status = LPSPI_MasterTransferBlocking(base, &txXfer);
+                if (status != kStatus_Success)
+                {
+                    LPSPI_MemDbgLog("CmdOnly", status, cmd0, addr24, xfer->cmdSize, base);
+                }
             }
             break;
             case kSpiMem_Xfer_CommandWriteData:
@@ -125,19 +253,26 @@ status_t LPSPI_MemXfer(spi_mem_xfer_t *xfer, LPSPI_Type *base)
                 status               = LPSPI_MemWaitModuleIdle(base);
                 if (status != kStatus_Success)
                 {
+                    LPSPI_MemDbgLog("WaitIdle(CmdW)", status, cmd0, addr24, xfer->cmdSize, base);
                     break;
                 }
                 status = LPSPI_MasterTransferBlocking(base, &cmdXfer);
                 if (status != kStatus_Success)
                 {
+                    LPSPI_MemDbgLog("CmdXfer(W)", status, cmd0, addr24, xfer->cmdSize, base);
                     break;
                 }
                 status = LPSPI_MemWaitModuleIdle(base);
                 if (status != kStatus_Success)
                 {
+                    LPSPI_MemDbgLog("WaitIdle(DataW)", status, cmd0, addr24, xfer->dataSize, base);
                     break;
                 }
                 status = LPSPI_MasterTransferBlocking(base, &dataXfer);
+                if (status != kStatus_Success)
+                {
+                    LPSPI_MemDbgLog("DataXfer(W)", status, cmd0, addr24, xfer->dataSize, base);
+                }
             }
             break;
             case kSpiMem_Xfer_CommandReadData:
@@ -155,19 +290,26 @@ status_t LPSPI_MemXfer(spi_mem_xfer_t *xfer, LPSPI_Type *base)
                 status               = LPSPI_MemWaitModuleIdle(base);
                 if (status != kStatus_Success)
                 {
+                    LPSPI_MemDbgLog("WaitIdle(CmdR)", status, cmd0, addr24, xfer->cmdSize, base);
                     break;
                 }
                 status = LPSPI_MasterTransferBlocking(base, &cmdXfer);
                 if (status != kStatus_Success)
                 {
+                    LPSPI_MemDbgLog("CmdXfer(R)", status, cmd0, addr24, xfer->cmdSize, base);
                     break;
                 }
                 status = LPSPI_MemWaitModuleIdle(base);
                 if (status != kStatus_Success)
                 {
+                    LPSPI_MemDbgLog("WaitIdle(DataR)", status, cmd0, addr24, xfer->dataSize, base);
                     break;
                 }
                 status = LPSPI_MasterTransferBlocking(base, &dataXfer);
+                if (status != kStatus_Success)
+                {
+                    LPSPI_MemDbgLog("DataXfer(R)", status, cmd0, addr24, xfer->dataSize, base);
+                }
             }
             break;
             default:
@@ -383,6 +525,10 @@ status_t LPSPI_MemWriteEnable(LPSPI_Type *base)
     spiMemXfer.mode     = kSpiMem_Xfer_CommandOnly;
 
     status = LPSPI_MemXfer(&spiMemXfer, base);
+    if (status != kStatus_Success)
+    {
+        LPSPI_MemDbgLog("WriteEnable", status, cmdBuffer[0], 0u, 0u, base);
+    }
 
     return status;
 }
