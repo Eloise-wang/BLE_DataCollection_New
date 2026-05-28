@@ -24,6 +24,10 @@
 #include "semphr.h"
 #include "task.h"
 
+#if defined(gAppLowpowerEnabled_d) && (gAppLowpowerEnabled_d > 0)
+#include "PWR_Interface.h"
+#endif
+
 #define APP_STORE_MAGIC          0x474F4C53u
 #define APP_STORE_VERSION        1u
 #define APP_STORE_SLOT_COUNT     4u
@@ -98,6 +102,7 @@ static uint32_t s_last_addr;
 static uint32_t s_last_size;
 static TickType_t s_last_begin_fail_log_tick;
 static TickType_t s_last_append_fail_log_tick;
+static uint32_t s_lp_disallow_count;
 
 static void app_store_set_err(app_store_err_t err, status_t st, uint32_t addr, uint32_t size)
 {
@@ -130,10 +135,32 @@ static void app_store_lock(void)
     {
         (void)xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
     }
+
+#if defined(gAppLowpowerEnabled_d) && (gAppLowpowerEnabled_d > 0)
+    if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED)
+    {
+        if (s_lp_disallow_count == 0u)
+        {
+            PWR_DisallowDeviceToSleep();
+        }
+        s_lp_disallow_count++;
+    }
+#endif
 }
 
 static void app_store_unlock(void)
 {
+#if defined(gAppLowpowerEnabled_d) && (gAppLowpowerEnabled_d > 0)
+    if ((xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) && (s_lp_disallow_count != 0u))
+    {
+        s_lp_disallow_count--;
+        if (s_lp_disallow_count == 0u)
+        {
+            PWR_AllowDeviceToSleep();
+        }
+    }
+#endif
+
     if (s_flash_mutex != NULL)
     {
         (void)xSemaphoreGive(s_flash_mutex);

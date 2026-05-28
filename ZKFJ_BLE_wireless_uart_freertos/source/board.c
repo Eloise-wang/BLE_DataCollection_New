@@ -280,7 +280,10 @@ uint32_t BOARD_GetLpspiClock(void)
 
 uint32_t BOARD_GetNorFlashBaudrate(void)
 {
-    return 2000000U;
+#ifndef BOARD_NOR_FLASH_BAUDRATE_HZ
+#define BOARD_NOR_FLASH_BAUDRATE_HZ 1000000U
+#endif
+    return (uint32_t)BOARD_NOR_FLASH_BAUDRATE_HZ;
 }
 
 LPSPI_Type *BOARD_GetLpspiForNorFlash(void)
