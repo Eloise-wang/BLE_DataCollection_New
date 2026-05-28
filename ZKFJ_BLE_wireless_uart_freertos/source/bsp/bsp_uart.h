@@ -25,6 +25,7 @@
 #define BSP_UART_PRINTF_BUF_SIZE 256U
 #endif
 
+// 是否启用UART打印功能 0: 禁用 1: 启用
 #ifndef BSP_UART_PRINT_ENABLE
 #define BSP_UART_PRINT_ENABLE 1
 #endif

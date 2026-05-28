@@ -34,7 +34,7 @@
 #if defined(DEBUG)
 #define APP_STORE_WRITE_VERIFY_ENABLE 1u
 #else
-#define APP_STORE_WRITE_VERIFY_ENABLE 0u
+#define APP_STORE_WRITE_VERIFY_ENABLE 1u
 #endif
 
 typedef struct
@@ -114,6 +114,11 @@ static void app_store_set_err(app_store_err_t err, status_t st, uint32_t addr, u
 
 static void app_store_flash_recover_locked(void)
 {
+    if (s_norHandle.driverBaseAddr != NULL)
+    {
+        (void)Nor_Flash_DeInit(&s_norHandle);
+    }
+
     BOARD_InitExtFlashPins();
     CLOCK_EnableClock(kCLOCK_Lpspi1);
     CLOCK_SetIpSrc(kCLOCK_Lpspi1, kCLOCK_IpSrcFro192M);
@@ -320,11 +325,15 @@ static bool app_store_flash_prog_locked(uint32_t addr, const void *data, uint32_
         app_store_set_err(APP_STORE_ERR_RANGE, kStatus_Fail, addr, size);
         return false;
     }
-    for (uint32_t attempt = 0u; attempt < 2u; attempt++)
+    const uint32_t max_attempts = 6u;
+    for (uint32_t attempt = 0u; attempt < max_attempts; attempt++)
     {
         if (app_store_wait_ready(2000u) != 0)
         {
-            return false;
+            app_store_flash_recover_locked();
+            const uint32_t backoff_ms = 1u << (attempt < 5u ? attempt : 5u);
+            OSA_TimeDelay(backoff_ms);
+            continue;
         }
 
         const status_t st = Nor_Flash_Program(&s_norHandle, addr, (uint8_t *)(uintptr_t)data, size);
@@ -332,14 +341,18 @@ static bool app_store_flash_prog_locked(uint32_t addr, const void *data, uint32_
         {
             if (app_store_wait_ready(2000u) != 0)
             {
-                return false;
+                app_store_flash_recover_locked();
+                const uint32_t backoff_ms = 1u << (attempt < 5u ? attempt : 5u);
+                OSA_TimeDelay(backoff_ms);
+                continue;
             }
             goto verify;
         }
 
         app_store_set_err(APP_STORE_ERR_PROG, st, addr, size);
         app_store_flash_recover_locked();
-        OSA_TimeDelay(1u);
+        const uint32_t backoff_ms = 1u << (attempt < 5u ? attempt : 5u);
+        OSA_TimeDelay(backoff_ms);
     }
     return false;
 
@@ -384,13 +397,29 @@ static bool app_store_flash_erase_sector_locked(uint32_t addr)
         app_store_set_err(APP_STORE_ERR_RANGE, kStatus_Fail, base, s_sector_size);
         return false;
     }
-    const status_t st = Nor_Flash_Erase_Sector(&s_norHandle, base);
-    if (st != kStatus_Success)
+    const uint32_t max_attempts = 4u;
+    for (uint32_t attempt = 0u; attempt < max_attempts; attempt++)
     {
+        if (app_store_wait_ready(5000u) != 0)
+        {
+            app_store_flash_recover_locked();
+            const uint32_t backoff_ms = 2u << (attempt < 3u ? attempt : 3u);
+            OSA_TimeDelay(backoff_ms);
+            continue;
+        }
+
+        const status_t st = Nor_Flash_Erase_Sector(&s_norHandle, base);
+        if (st == kStatus_Success)
+        {
+            return (app_store_wait_ready(5000u) == 0);
+        }
+
         app_store_set_err(APP_STORE_ERR_ERASE, st, base, s_sector_size);
-        return false;
+        app_store_flash_recover_locked();
+        const uint32_t backoff_ms = 2u << (attempt < 3u ? attempt : 3u);
+        OSA_TimeDelay(backoff_ms);
     }
-    return (app_store_wait_ready(5000u) == 0);
+    return false;
 }
 
 static bool app_store_header_read_locked(uint8_t slot, app_store_header_t *out)

@@ -36,7 +36,7 @@ static SemaphoreHandle_t s_tx_mutex;
 static bool s_ble_connected;
 
 #ifndef PROTO_STATUS_REPORT_ENABLE
-#define PROTO_STATUS_REPORT_ENABLE 0
+#define PROTO_STATUS_REPORT_ENABLE 1
 #endif
 
 static void proto_send(const uint8_t *data, size_t len)
