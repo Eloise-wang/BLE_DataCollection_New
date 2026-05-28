@@ -26,6 +26,11 @@
 #define APP_STORE_MAGIC          0x474F4C53u
 #define APP_STORE_VERSION        1u
 #define APP_STORE_SLOT_COUNT     4u
+#if defined(DEBUG)
+#define APP_STORE_WRITE_VERIFY_ENABLE 1u
+#else
+#define APP_STORE_WRITE_VERIFY_ENABLE 0u
+#endif
 
 typedef struct
 {
@@ -222,7 +227,34 @@ static bool app_store_flash_prog_locked(uint32_t addr, const void *data, uint32_
     {
         return false;
     }
-    return (app_store_wait_ready(2000u) == 0);
+    if (app_store_wait_ready(2000u) != 0)
+    {
+        return false;
+    }
+
+#if APP_STORE_WRITE_VERIFY_ENABLE
+    uint8_t buf[64];
+    const uint8_t *src = (const uint8_t *)data;
+    uint32_t off = 0u;
+    while (off < size)
+    {
+        uint32_t chunk = size - off;
+        if (chunk > (uint32_t)sizeof(buf))
+        {
+            chunk = (uint32_t)sizeof(buf);
+        }
+        if (!app_store_flash_read_locked(addr + off, buf, chunk))
+        {
+            return false;
+        }
+        if (memcmp(buf, src + off, chunk) != 0)
+        {
+            return false;
+        }
+        off += chunk;
+    }
+#endif
+    return true;
 }
 
 static bool app_store_flash_erase_sector_locked(uint32_t addr)
@@ -390,7 +422,20 @@ static bool app_store_open_locked(uint64_t task_id, bool create, const app_stora
         }
     }
 
-    if ((found_slot == 0xFFu) && create)
+    if ((found_slot != 0xFFu) && create)
+    {
+        if (!app_store_header_write_locked(found_slot, task_id, meta))
+        {
+            return false;
+        }
+        (void)app_store_flash_erase_sector_locked(app_store_pre_base(found_slot));
+        (void)app_store_flash_erase_sector_locked(app_store_data_base(found_slot));
+        if (s_active.valid && (s_active.task_id == task_id))
+        {
+            (void)memset(&s_active, 0, sizeof(s_active));
+        }
+    }
+    else if ((found_slot == 0xFFu) && create)
     {
         for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
         {
