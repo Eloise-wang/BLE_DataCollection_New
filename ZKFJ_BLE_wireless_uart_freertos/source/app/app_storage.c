@@ -21,6 +21,7 @@
 
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "task.h"
 
 #define APP_STORE_MAGIC          0x474F4C53u
 #define APP_STORE_VERSION        1u
@@ -49,6 +50,7 @@ typedef struct
 
 static SemaphoreHandle_t s_flash_mutex;
 static bool s_flash_inited;
+static bool s_crc_inited;
 static nor_config_t s_norCfg;
 static nor_handle_t s_norHandle;
 static lpspi_memory_config_t s_memCfg = {
@@ -68,7 +70,7 @@ static app_store_task_state_t s_active;
 
 static void app_store_lock(void)
 {
-    if (s_flash_mutex == NULL)
+    if ((s_flash_mutex == NULL) && (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED))
     {
         s_flash_mutex = xSemaphoreCreateMutex();
     }
@@ -261,7 +263,6 @@ static bool app_store_header_read_locked(uint8_t slot, app_store_header_t *out)
         return false;
     }
 
-    BSP_CRC_Init();
     const uint32_t crc = BSP_CRC_Calculate(&out->version, sizeof(*out) - 8u, BSP_CRC_WIDTH_32);
     if (crc != out->header_crc)
     {
@@ -287,7 +288,6 @@ static bool app_store_header_write_locked(uint8_t slot, uint64_t task_id, const 
     {
         h.meta = *meta;
     }
-    BSP_CRC_Init();
     h.header_crc = BSP_CRC_Calculate(&h.version, sizeof(h) - 8u, BSP_CRC_WIDTH_32);
 
     const uint32_t off_after_magic = 4u;
@@ -449,6 +449,18 @@ static bool app_store_open_locked(uint64_t task_id, bool create, const app_stora
 bool APP_Storage_Init(void)
 {
     bool ok = false;
+
+    if (!s_crc_inited)
+    {
+        BSP_CRC_Init();
+        s_crc_inited = true;
+    }
+
+    if ((s_flash_mutex == NULL) && (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED))
+    {
+        s_flash_mutex = xSemaphoreCreateMutex();
+    }
+
     app_store_lock();
     ok = app_store_flash_init_locked();
     app_store_unlock();
