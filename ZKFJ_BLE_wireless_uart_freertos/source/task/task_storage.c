@@ -12,6 +12,9 @@ static uint64_t s_storage_task_id;
 static uint32_t s_storage_task_gen;
 static TickType_t s_next_retry_tick;
 static TickType_t s_last_begin_log_tick;
+static bool s_has_pending_record;
+static sensor_record_t s_pending_record;
+static uint32_t s_pending_fail_count;
 static bool task_storage_begin_if_needed(uint64_t task_id)
 {
     if (s_storage_ready)
@@ -49,15 +52,6 @@ static bool task_storage_begin_if_needed(uint64_t task_id)
             (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
         }
         return true;
-    }
-    else
-    {
-        const TickType_t now = xTaskGetTickCount();
-        if ((now - s_last_begin_log_tick) > pdMS_TO_TICKS(2000U))
-        {
-            s_last_begin_log_tick = now;
-            BSP_UART_Print("[STO] BeginTask failed\r\n");
-        }
     }
     return false;
 }
@@ -130,15 +124,40 @@ void TASK_StorageTask(void *pvParameters)
         }
 
         sensor_record_t record;
-        if (xQueueReceive(g_sensor_data_queue, &record, pdMS_TO_TICKS(500U)) == pdTRUE)
+        const TickType_t rx_wait = s_has_pending_record ? 0U : pdMS_TO_TICKS(500U);
+        if (xQueueReceive(g_sensor_data_queue, &record, rx_wait) == pdTRUE)
         {
-            if (s_storage_ready)
+            s_pending_record = record;
+            s_has_pending_record = true;
+            s_pending_fail_count = 0U;
+
+            while (xQueueReceive(g_sensor_data_queue, &record, 0U) == pdTRUE)
             {
-                const bool pre = TASK_IsPretest();
-                const bool ok = pre ?
-                                    APP_Storage_AppendPreData(s_storage_task_id, &record, (uint32_t)sizeof(record)) :
-                                    APP_Storage_AppendData(s_storage_task_id, &record, (uint32_t)sizeof(record));
-                (void)ok;
+                s_pending_record = record;
+            }
+        }
+
+        if (s_has_pending_record && s_storage_ready)
+        {
+            const bool pre = TASK_IsPretest();
+            record = s_pending_record;
+            const bool ok = pre ?
+                                APP_Storage_AppendPreData(s_storage_task_id, &record, (uint32_t)sizeof(record)) :
+                                APP_Storage_AppendData(s_storage_task_id, &record, (uint32_t)sizeof(record));
+            if (ok)
+            {
+                s_has_pending_record = false;
+                s_pending_fail_count = 0U;
+            }
+            else
+            {
+                s_pending_fail_count++;
+                if (s_pending_fail_count >= 50U)
+                {
+                    s_has_pending_record = false;
+                    s_pending_fail_count = 0U;
+                }
+                vTaskDelay(pdMS_TO_TICKS(20U));
             }
         }
     }
