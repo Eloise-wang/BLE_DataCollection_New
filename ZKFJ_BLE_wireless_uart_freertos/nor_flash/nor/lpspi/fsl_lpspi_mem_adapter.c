@@ -44,6 +44,7 @@ extern void BOARD_LpspiIomuxConfig(spi_pin_mode_t pinMode);
 static status_t LPSPI_MemWaitBusy(LPSPI_Type *base);
 static status_t LPSPI_MemWaitModuleIdle(LPSPI_Type *base);
 static void LPSPI_MemDbgLog(const char *stage, status_t st, uint8_t cmd0, uint32_t addr, uint32_t len, LPSPI_Type *base);
+static status_t LPSPI_MemReadStatus(uint8_t *outStatus, LPSPI_Type *base);
 
 typedef struct
 {
@@ -213,6 +214,10 @@ status_t LPSPI_MemXfer(spi_mem_xfer_t *xfer, LPSPI_Type *base)
         {
             addr24 = ((uint32_t)xfer->cmd[1] << 16) | ((uint32_t)xfer->cmd[2] << 8) | ((uint32_t)xfer->cmd[3]);
         }
+
+        BOARD_LpspiPcsPinControl(false);
+        LPSPI_FlushFifo(base, true, true);
+        LPSPI_ClearStatusFlags(base, (uint32_t)kLPSPI_AllStatusFlag);
 
         BOARD_LpspiPcsPinControl(true);
 
@@ -408,16 +413,8 @@ static status_t LPSPI_MemWaitBusy(LPSPI_Type *base)
     status_t status = kStatus_Fail;
     do
     {
-        uint8_t cmdBuffer[] = {kFlashCmd_ReadStatus};
         uint8_t flashStatus = 0u;
-        spi_mem_xfer_t spiMemXfer;
-        spiMemXfer.cmd      = cmdBuffer;
-        spiMemXfer.cmdSize  = sizeof(cmdBuffer);
-        spiMemXfer.data     = &flashStatus;
-        spiMemXfer.dataSize = 1u;
-        spiMemXfer.mode     = kSpiMem_Xfer_CommandReadData;
-
-        status = LPSPI_MemXfer(&spiMemXfer, base);
+        status = LPSPI_MemReadStatus(&flashStatus, base);
         if (status != kStatus_Success)
         {
             break;
@@ -427,6 +424,24 @@ static status_t LPSPI_MemWaitBusy(LPSPI_Type *base)
     } while (isBusy);
 
     return status;
+}
+
+static status_t LPSPI_MemReadStatus(uint8_t *outStatus, LPSPI_Type *base)
+{
+    if (outStatus == NULL)
+    {
+        return kStatus_InvalidArgument;
+    }
+
+    uint8_t cmdBuffer[] = {kFlashCmd_ReadStatus};
+    spi_mem_xfer_t spiMemXfer;
+    spiMemXfer.cmd      = cmdBuffer;
+    spiMemXfer.cmdSize  = sizeof(cmdBuffer);
+    spiMemXfer.data     = outStatus;
+    spiMemXfer.dataSize = 1u;
+    spiMemXfer.mode     = kSpiMem_Xfer_CommandReadData;
+
+    return LPSPI_MemXfer(&spiMemXfer, base);
 }
 
 static status_t LPSPI_MemWaitModuleIdle(LPSPI_Type *base)
@@ -509,8 +524,6 @@ status_t LPSPI_MemRead(uint32_t addr, uint8_t *buffer, uint32_t lengthInBytes, b
 
 status_t LPSPI_MemWriteEnable(LPSPI_Type *base)
 {
-    status_t status = kStatus_Fail;
-
     uint8_t cmdBuffer[5];
     uint32_t cmdSize = 4u;
 
@@ -524,13 +537,36 @@ status_t LPSPI_MemWriteEnable(LPSPI_Type *base)
     spiMemXfer.dataSize = 0U;
     spiMemXfer.mode     = kSpiMem_Xfer_CommandOnly;
 
-    status = LPSPI_MemXfer(&spiMemXfer, base);
-    if (status != kStatus_Success)
+    const uint32_t max_attempts = 3u;
+    for (uint32_t attempt = 0u; attempt < max_attempts; attempt++)
     {
-        LPSPI_MemDbgLog("WriteEnable", status, cmdBuffer[0], 0u, 0u, base);
+        status_t status = LPSPI_MemXfer(&spiMemXfer, base);
+        if (status != kStatus_Success)
+        {
+            LPSPI_MemDbgLog("WriteEnable", status, cmdBuffer[0], 0u, 0u, base);
+            OSA_TimeDelay(1u);
+            continue;
+        }
+
+        uint8_t flashStatus = 0u;
+        status = LPSPI_MemReadStatus(&flashStatus, base);
+        if (status != kStatus_Success)
+        {
+            LPSPI_MemDbgLog("WREN_ReadSR", status, cmdBuffer[0], 0u, 1u, base);
+            OSA_TimeDelay(1u);
+            continue;
+        }
+
+        if ((flashStatus & 0x02u) != 0u)
+        {
+            return kStatus_Success;
+        }
+
+        LPSPI_MemDbgLog("WREN_NoWEL", kStatus_Fail, cmdBuffer[0], (uint32_t)flashStatus, 1u, base);
+        OSA_TimeDelay(1u);
     }
 
-    return status;
+    return kStatus_Fail;
 }
 
 status_t LPSPI_MemWritePage(uint32_t addr, uint8_t *buffer, uint32_t lengthInBytes, bool blocking, LPSPI_Type *base)

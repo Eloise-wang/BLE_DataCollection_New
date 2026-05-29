@@ -94,6 +94,8 @@ typedef enum
     APP_STORE_ERR_HEADER_CRC = 11,
     APP_STORE_ERR_OPEN_NO_SLOT = 12,
     APP_STORE_ERR_OPEN_HEADER_RECHECK = 13,
+    APP_STORE_ERR_VERIFY_MISMATCH = 14,
+    APP_STORE_ERR_VERIFY_READ_UNSTABLE = 15,
 } app_store_err_t;
 
 static app_store_err_t s_last_err;
@@ -102,7 +104,20 @@ static uint32_t s_last_addr;
 static uint32_t s_last_size;
 static TickType_t s_last_begin_fail_log_tick;
 static TickType_t s_last_append_fail_log_tick;
+static TickType_t s_last_verify_mismatch_log_tick;
 static uint32_t s_lp_disallow_count;
+
+static void app_store_hex_to_str(char *out, const uint8_t *in, uint32_t n)
+{
+    static const char h[] = "0123456789ABCDEF";
+    for (uint32_t i = 0u; i < n; i++)
+    {
+        const uint8_t v = in[i];
+        out[i * 2u] = h[(v >> 4) & 0x0Fu];
+        out[i * 2u + 1u] = h[v & 0x0Fu];
+    }
+    out[n * 2u] = '\0';
+}
 
 static void app_store_set_err(app_store_err_t err, status_t st, uint32_t addr, uint32_t size)
 {
@@ -376,7 +391,116 @@ verify:
         }
         if (memcmp(buf, src + off, chunk) != 0)
         {
-            app_store_set_err(APP_STORE_ERR_PROG, kStatus_Fail, addr + off, chunk);
+            const TickType_t now = xTaskGetTickCount();
+            uint8_t buf2[sizeof(buf)];
+            uint8_t buf3[sizeof(buf)];
+            status_t st2 = kStatus_Fail;
+            status_t st3 = kStatus_Fail;
+            bool read2_ok = false;
+            bool read3_ok = false;
+            bool ok_on_retry = false;
+
+            if (app_store_flash_read_locked(addr + off, buf2, chunk))
+            {
+                st2 = kStatus_Success;
+                read2_ok = true;
+                if (memcmp(buf2, src + off, chunk) == 0)
+                {
+                    ok_on_retry = true;
+                }
+            }
+
+            if (!ok_on_retry)
+            {
+                if (app_store_flash_read_locked(addr + off, buf3, chunk))
+                {
+                    st3 = kStatus_Success;
+                    read3_ok = true;
+                    if (memcmp(buf3, src + off, chunk) == 0)
+                    {
+                        ok_on_retry = true;
+                    }
+                }
+            }
+
+            if (ok_on_retry)
+            {
+                if ((now - s_last_verify_mismatch_log_tick) > pdMS_TO_TICKS(2000U))
+                {
+                    s_last_verify_mismatch_log_tick = now;
+                    const uint32_t nlog = (chunk < 16u) ? chunk : 16u;
+                    char expHex[16u * 2u + 1u];
+                    char r1Hex[16u * 2u + 1u];
+                    char r2Hex[16u * 2u + 1u];
+                    char r3Hex[16u * 2u + 1u];
+                    app_store_hex_to_str(expHex, src + off, nlog);
+                    app_store_hex_to_str(r1Hex, buf, nlog);
+                    if (read2_ok)
+                    {
+                        app_store_hex_to_str(r2Hex, buf2, nlog);
+                    }
+                    else
+                    {
+                        r2Hex[0] = '\0';
+                    }
+                    if (read3_ok)
+                    {
+                        app_store_hex_to_str(r3Hex, buf3, nlog);
+                    }
+                    else
+                    {
+                        r3Hex[0] = '\0';
+                    }
+                    BSP_UART_Print("[STO] VerifyRetryOk addr=0x%08X size=%u r2=%d r3=%d exp=%s r1=%s r2=%s r3=%s\r\n",
+                                   (unsigned)(addr + off), (unsigned)chunk, (int)st2, (int)st3, expHex, r1Hex, r2Hex, r3Hex);
+                }
+                off += chunk;
+                continue;
+            }
+
+            bool read_unstable = false;
+            if (read2_ok && (memcmp(buf, buf2, chunk) != 0))
+            {
+                read_unstable = true;
+            }
+            if (read2_ok && read3_ok && (memcmp(buf2, buf3, chunk) != 0))
+            {
+                read_unstable = true;
+            }
+
+            if ((now - s_last_verify_mismatch_log_tick) > pdMS_TO_TICKS(2000U))
+            {
+                s_last_verify_mismatch_log_tick = now;
+                const uint32_t nlog = (chunk < 16u) ? chunk : 16u;
+                char expHex[16u * 2u + 1u];
+                char r1Hex[16u * 2u + 1u];
+                char r2Hex[16u * 2u + 1u];
+                char r3Hex[16u * 2u + 1u];
+                app_store_hex_to_str(expHex, src + off, nlog);
+                app_store_hex_to_str(r1Hex, buf, nlog);
+                if (read2_ok)
+                {
+                    app_store_hex_to_str(r2Hex, buf2, nlog);
+                }
+                else
+                {
+                    r2Hex[0] = '\0';
+                }
+                if (read3_ok)
+                {
+                    app_store_hex_to_str(r3Hex, buf3, nlog);
+                }
+                else
+                {
+                    r3Hex[0] = '\0';
+                }
+                BSP_UART_Print("[STO] VerifyMismatch addr=0x%08X size=%u r2=%d r3=%d unstable=%u exp=%s r1=%s r2=%s r3=%s\r\n",
+                               (unsigned)(addr + off), (unsigned)chunk, (int)st2, (int)st3, (unsigned)read_unstable,
+                               expHex, r1Hex, r2Hex, r3Hex);
+            }
+
+            app_store_set_err(read_unstable ? APP_STORE_ERR_VERIFY_READ_UNSTABLE : APP_STORE_ERR_VERIFY_MISMATCH,
+                              kStatus_Fail, addr + off, chunk);
             return false;
         }
         off += chunk;
@@ -784,9 +908,10 @@ bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t recor
             s_last_append_fail_log_tick = now;
             const uint32_t hi = (uint32_t)(task_id >> 32);
             const uint32_t lo = (uint32_t)(task_id);
-            BSP_UART_Print("[STO] AppendData fail: task=%08X%08X err=%u st=%d addr=0x%08X size=%u data=%u cap=%u next=0x%08X\r\n",
-                           hi, lo, (unsigned)s_last_err, (int)s_last_status, (unsigned)s_last_addr, (unsigned)s_last_size,
-                           (unsigned)before_size, (unsigned)cap, (unsigned)next_erase);
+            BSP_UART_Print("[STO] AppendData fail: task=%08X%08X err=%u st=%d src=%c addr=0x%08X size=%u data=%u cap=%u next=0x%08X\r\n",
+                           hi, lo, (unsigned)s_last_err, (int)s_last_status,
+                           (s_last_err == APP_STORE_ERR_VERIFY_MISMATCH) ? 'V' : 'H',
+                           (unsigned)s_last_addr, (unsigned)s_last_size, (unsigned)before_size, (unsigned)cap, (unsigned)next_erase);
         }
     }
     return ok;
@@ -834,9 +959,10 @@ bool APP_Storage_AppendPreData(uint64_t task_id, const void *record, uint32_t re
             s_last_append_fail_log_tick = now;
             const uint32_t hi = (uint32_t)(task_id >> 32);
             const uint32_t lo = (uint32_t)(task_id);
-            BSP_UART_Print("[STO] AppendPreData fail: task=%08X%08X err=%u st=%d addr=0x%08X size=%u pre=%u cap=%u next=0x%08X\r\n",
-                           hi, lo, (unsigned)s_last_err, (int)s_last_status, (unsigned)s_last_addr, (unsigned)s_last_size,
-                           (unsigned)before_size, (unsigned)cap, (unsigned)next_erase);
+            BSP_UART_Print("[STO] AppendPreData fail: task=%08X%08X err=%u st=%d src=%c addr=0x%08X size=%u pre=%u cap=%u next=0x%08X\r\n",
+                           hi, lo, (unsigned)s_last_err, (int)s_last_status,
+                           (s_last_err == APP_STORE_ERR_VERIFY_MISMATCH) ? 'V' : 'H',
+                           (unsigned)s_last_addr, (unsigned)s_last_size, (unsigned)before_size, (unsigned)cap, (unsigned)next_erase);
         }
     }
     return ok;
