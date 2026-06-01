@@ -27,6 +27,9 @@
 #include "fsl_cmc.h"
 #include "task_manager.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 /************************************************************************************
  *************************************************************************************
  * Private functions prototypes
@@ -100,6 +103,38 @@ int main(void)
     /*won't run here*/
     assert(0);
     return 0;
+}
+
+/*! *********************************************************************************
+ * \brief  Provides static memory for the FreeRTOS idle task.
+ * Required when configSUPPORT_STATIC_ALLOCATION = 1 and
+ * configKERNEL_PROVIDED_STATIC_MEMORY = 0.
+ ********************************************************************************** */
+void vApplicationGetIdleTaskMemory(StaticTask_t ** ppxIdleTaskTCBBuffer,
+                                   StackType_t ** ppxIdleTaskStackBuffer,
+                                   configSTACK_DEPTH_TYPE * puxIdleTaskStackSize)
+{
+    static StaticTask_t xIdleTaskTCB;
+    static StackType_t  xIdleTaskStack[configMINIMAL_STACK_SIZE];
+    *ppxIdleTaskTCBBuffer    = &xIdleTaskTCB;
+    *ppxIdleTaskStackBuffer = xIdleTaskStack;
+    *puxIdleTaskStackSize   = (configSTACK_DEPTH_TYPE)configMINIMAL_STACK_SIZE;
+}
+
+/*! *********************************************************************************
+ * \brief  Provides static memory for the FreeRTOS timer daemon task.
+ * Required when configSUPPORT_STATIC_ALLOCATION = 1 and
+ * configKERNEL_PROVIDED_STATIC_MEMORY = 0.
+ ********************************************************************************** */
+void vApplicationGetTimerTaskMemory(StaticTask_t ** ppxTimerTaskTCBBuffer,
+                                    StackType_t ** ppxTimerTaskStackBuffer,
+                                    configSTACK_DEPTH_TYPE * puxTimerTaskStackSize)
+{
+    static StaticTask_t     xTimerTaskTCB;
+    static StackType_t      xTimerTaskStack[configTIMER_TASK_STACK_DEPTH];
+    *ppxTimerTaskTCBBuffer    = &xTimerTaskTCB;
+    *ppxTimerTaskStackBuffer = xTimerTaskStack;
+    *puxTimerTaskStackSize   = (configSTACK_DEPTH_TYPE)configTIMER_TASK_STACK_DEPTH;
 }
 
 /*! *********************************************************************************

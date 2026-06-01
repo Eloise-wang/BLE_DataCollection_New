@@ -1569,8 +1569,9 @@ static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user)
         s_tx_delay_timer = xTimerCreateStatic("TxDelay",
                                                pdMS_TO_TICKS(3U),
                                                pdFALSE,
-                                               &s_tx_delay_timer_buffer,
-                                               BleApp_TxDelayTimerCallback);
+                                               NULL,
+                                               BleApp_TxDelayTimerCallback,
+                                               &s_tx_delay_timer_buffer);
     }
 
     size_t pos = 0U;

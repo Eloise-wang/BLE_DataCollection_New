@@ -317,7 +317,8 @@ static void proto_handle_clear_task(const proto_cmd_msg_t *msg)
 
 static void proto_handle_request_history(const proto_cmd_msg_t *msg)
 {
-    if (msg->len < (uint8_t)(8U + 4U + 2U))
+    /* v2 协议：payload = task_id(8) + offset(4) + count(2) + file_sel(1) = 15 bytes */
+    if (msg->len < 15U)
     {
         proto_send_ack(msg->cmd, PROTO_STATUS_LEN_ERROR);
         return;
@@ -325,15 +326,13 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
 
     uint64_t task_id;
     uint32_t offset;
-    uint16_t max_bytes;
+    uint16_t count;
+    uint8_t  file_sel;
 
-    if (!proto_payload_read_u64_le(&msg->payload[0], msg->len, &task_id) ||
-        !proto_payload_read_u32_le(&msg->payload[8], msg->len - 8U, &offset) ||
-        !proto_payload_read_u16_le(&msg->payload[12], msg->len - 12U, &max_bytes))
-    {
-        proto_send_ack(msg->cmd, PROTO_STATUS_PARAM_ERROR);
-        return;
-    }
+    (void)proto_payload_read_u64_le(&msg->payload[0],  msg->len, &task_id);
+    (void)proto_payload_read_u32_le(&msg->payload[8],  msg->len - 8U, &offset);
+    (void)proto_payload_read_u16_le(&msg->payload[12], msg->len - 12U, &count);
+    file_sel = msg->payload[14];
 
     if (!APP_Storage_Init())
     {
@@ -341,44 +340,25 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
         return;
     }
 
+    /* 获取总字节数 */
     uint32_t total_bytes = 0U;
-    const uint8_t file_sel = (msg->len >= (uint8_t)(8U + 4U + 2U + 1U)) ? msg->payload[14] : 0U;
-    if (file_sel == 0U)
+    switch (file_sel)
     {
-        if (!APP_Storage_GetDataSize(task_id, &total_bytes))
-        {
-            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
+        case 0U:
+            (void)APP_Storage_GetDataSize(task_id, &total_bytes);
+            break;
+        case 1U:
+            (void)APP_Storage_GetPreDataSize(task_id, &total_bytes);
+            break;
+        case 2U:
+            (void)APP_Storage_GetMetaSize(task_id, &total_bytes);
+            break;
+        case 3U:
+            (void)APP_Storage_GetLogSize(task_id, &total_bytes);
+            break;
+        default:
+            proto_send_ack(msg->cmd, PROTO_STATUS_PARAM_ERROR);
             return;
-        }
-    }
-    else if (file_sel == 1U)
-    {
-        if (!APP_Storage_GetPreDataSize(task_id, &total_bytes))
-        {
-            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
-            return;
-        }
-    }
-    else if (file_sel == 2U)
-    {
-        if (!APP_Storage_GetMetaSize(task_id, &total_bytes))
-        {
-            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
-            return;
-        }
-    }
-    else if (file_sel == 3U)
-    {
-        if (!APP_Storage_GetLogSize(task_id, &total_bytes))
-        {
-            proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
-            return;
-        }
-    }
-    else
-    {
-        proto_send_ack(msg->cmd, PROTO_STATUS_PARAM_ERROR);
-        return;
     }
 
     if (total_bytes == 0U)
@@ -393,53 +373,60 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
         return;
     }
 
-    uint16_t chunk_max = (max_bytes == 0U) ? 200U : max_bytes;
-    if (chunk_max > 200U)
+    if (count == 0U)
     {
-        chunk_max = 200U;
+        proto_send_ack(msg->cmd, PROTO_STATUS_PARAM_ERROR);
+        return;
     }
 
-    uint8_t data_buf[200];
-    uint8_t frame_buf[1 + 2 + 8 + 4 + 4 + 200 + 2];
+    /* 突发窗口上限，防止一次发太多导致 BLE 缓冲区积压 */
+    if (count > 50U)
+    {
+        count = 50U;
+    }
+
+    /* BLE 流控：帧间隔根据窗口大小动态调整
+     * 小窗口（1~10）: 3ms  少量突发快速响应
+     * 中窗口（11~30）: 5ms  中等窗口平衡
+     * 大窗口（31~50）: 8ms  给 Controller 充足缓冲时间 */
+    uint32_t frame_delay_ms = (count <= 10U) ? 3U : (count <= 30U) ? 5U : 8U;
+
+    /* 发 ACK，表示下位机准备好了 */
     proto_send_ack(msg->cmd, PROTO_STATUS_OK);
+
     TASK_SetHistorySending(true);
-    {
-        size_t out_len = 0U;
-        if (PROTO_DataBuildFrame(task_id, offset, total_bytes, NULL, 0U, frame_buf, sizeof(frame_buf), &out_len))
-        {
-            proto_send(frame_buf, out_len);
-        }
-    }
 
-    while (offset < total_bytes)
-    {
-        if (!s_ble_connected)
-        {
-            break;
-        }
+    uint32_t pos = offset;
+    uint16_t frames_sent = 0U;
 
-        uint16_t to_read = chunk_max;
-        if ((uint32_t)to_read > (total_bytes - offset))
-        {
-            to_read = (uint16_t)(total_bytes - offset);
-        }
+    /* BLE MTU=247，payload 最大 PROTO_MAX_CHUNK_SIZE 字节 */
+    uint8_t data_buf[PROTO_MAX_CHUNK_SIZE];
+    uint8_t frame_buf[1 + 2 + 8 + 4 + 4 + PROTO_MAX_CHUNK_SIZE + 2];
+
+    /* 突发窗口循环：发满 count 帧后停止，等上位机下一个请求 */
+    while (frames_sent < count && pos < total_bytes)
+    {
+        uint16_t to_read = (uint16_t)((total_bytes - pos < (uint32_t)PROTO_MAX_CHUNK_SIZE)
+                                      ? (total_bytes - pos)
+                                      : (uint32_t)PROTO_MAX_CHUNK_SIZE);
 
         int nread = -1;
-        if (file_sel == 0U)
+        switch (file_sel)
         {
-            nread = APP_Storage_ReadData(task_id, offset, data_buf, (uint32_t)to_read);
-        }
-        else if (file_sel == 1U)
-        {
-            nread = APP_Storage_ReadPreData(task_id, offset, data_buf, (uint32_t)to_read);
-        }
-        else if (file_sel == 2U)
-        {
-            nread = APP_Storage_ReadMeta(task_id, offset, data_buf, (uint32_t)to_read);
-        }
-        else
-        {
-            nread = APP_Storage_ReadLog(task_id, offset, data_buf, (uint32_t)to_read);
+            case 0U:
+                nread = APP_Storage_ReadData(task_id, pos, data_buf, (uint32_t)to_read);
+                break;
+            case 1U:
+                nread = APP_Storage_ReadPreData(task_id, pos, data_buf, (uint32_t)to_read);
+                break;
+            case 2U:
+                nread = APP_Storage_ReadMeta(task_id, pos, data_buf, (uint32_t)to_read);
+                break;
+            case 3U:
+                nread = APP_Storage_ReadLog(task_id, pos, data_buf, (uint32_t)to_read);
+                break;
+            default:
+                break;
         }
         if (nread <= 0)
         {
@@ -447,22 +434,30 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
         }
 
         size_t out_len = 0U;
-        if (!PROTO_DataBuildFrame(task_id, offset, total_bytes, data_buf, (uint16_t)nread, frame_buf, sizeof(frame_buf), &out_len))
+        if (!PROTO_DataBuildFrame(task_id, pos, total_bytes,
+                                 data_buf, (uint16_t)nread,
+                                 frame_buf, sizeof(frame_buf), &out_len))
         {
             break;
         }
 
         proto_send(frame_buf, out_len);
-        offset += (uint32_t)nread;
-        vTaskDelay(pdMS_TO_TICKS(5U));
-    }
+        pos += (uint32_t)nread;
+        frames_sent++;
 
-    if (s_ble_connected && (offset >= total_bytes))
-    {
-        size_t out_len = 0U;
-        if (PROTO_DataBuildFrame(task_id, total_bytes, total_bytes, NULL, 0U, frame_buf, sizeof(frame_buf), &out_len))
+        /* 发满 count 帧后停下来，等上位机的下一个请求 */
+        if (frames_sent >= count)
         {
-            proto_send(frame_buf, out_len);
+            break;
+        }
+
+        /* BLE 流控间隔，给 Controller 刷新缓冲区的喘息时间 */
+        vTaskDelay(pdMS_TO_TICKS(frame_delay_ms));
+
+        /* BLE 断开时立即停止 */
+        if (!s_ble_connected)
+        {
+            break;
         }
     }
 

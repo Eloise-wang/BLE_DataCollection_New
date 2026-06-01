@@ -28,6 +28,11 @@ extern "C" {
 #define PROTO_CMD_REQUEST_HISTORY   ((uint8_t)0x04U)
 #define PROTO_CMD_CLEAR_TASK        ((uint8_t)0x05U)
 
+/* BLE MTU=247, max data per DATA frame = 247 - 21 = 226, but round down to 220 for safety margin */
+#ifndef PROTO_MAX_CHUNK_SIZE
+#define PROTO_MAX_CHUNK_SIZE        220U
+#endif
+
 typedef uint8_t proto_status_t;
 
 #define PROTO_STATUS_OK             ((proto_status_t)0x00U)

@@ -86,7 +86,7 @@ extern uint32_t SystemCoreClock;
 #define configINCLUDE_FREERTOS_TASK_C_ADDITIONS_H 1
 
 /* Memory allocation related definitions. */
-#define configSUPPORT_STATIC_ALLOCATION  0
+#define configSUPPORT_STATIC_ALLOCATION  1
 #define configSUPPORT_DYNAMIC_ALLOCATION 1
 #define configAPPLICATION_ALLOCATED_HEAP 0
 
