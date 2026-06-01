@@ -490,8 +490,8 @@ static void proto_handle_debug_list(const proto_cmd_msg_t *msg)
 
     BSP_UART_Print("[DBG] === Task List ===\r\n");
 
-    uint64_t ids[4];
-    uint8_t n = APP_Storage_ListTasks(ids, 4U);
+    uint64_t ids[8];
+    uint8_t n = APP_Storage_ListTasks(ids, (uint8_t)(sizeof(ids) / sizeof(ids[0])));
     if (n == 0U)
     {
         BSP_UART_Print("  (empty)\r\n");
@@ -500,9 +500,9 @@ static void proto_handle_debug_list(const proto_cmd_msg_t *msg)
     {
         for (uint8_t i = 0U; i < n; i++)
         {
-        char hex_str[17];
-        proto_u64_to_hex_le(hex_str, ids[i]);
-        BSP_UART_Print("  [%u] %s\r\n", (unsigned)i, hex_str);
+            char hex_str[17];
+            proto_u64_to_hex_le(hex_str, ids[i]);
+            BSP_UART_Print("  [%u] %s\r\n", (unsigned)i, hex_str);
         }
     }
     BSP_UART_Print("[DBG] === %u tasks ===\r\n", (unsigned)n);

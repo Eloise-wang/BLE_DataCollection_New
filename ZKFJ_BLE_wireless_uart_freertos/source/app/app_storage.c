@@ -29,8 +29,9 @@
 #endif
 
 #define APP_STORE_MAGIC          0x474F4C53u
-#define APP_STORE_VERSION        1u
+#define APP_STORE_VERSION        2u
 #define APP_STORE_SLOT_COUNT     8u
+#define APP_STORE_SEQ_UNUSED     0xFFFFFFFFu
 #if defined(DEBUG)
 #define APP_STORE_WRITE_VERIFY_ENABLE 1u
 #else
@@ -75,6 +76,7 @@ static uint32_t s_mem_size;
 static uint32_t s_usable_size;
 static uint32_t s_slot_size;
 static uint32_t s_pre_capacity;
+static uint32_t s_task_seq_next;
 
 static app_store_task_state_t s_active;
 
@@ -209,6 +211,8 @@ static int app_store_wait_ready(uint32_t timeout_ms)
     return -1;
 }
 
+static bool app_store_header_read_locked(uint8_t slot, app_store_header_t *out);
+
 static bool app_store_flash_init_locked(void)
 {
     if (s_flash_inited)
@@ -277,6 +281,23 @@ static bool app_store_flash_init_locked(void)
         app_store_set_err(APP_STORE_ERR_LAYOUT, kStatus_Fail, 0u, 0u);
     }
     s_flash_inited = s_layout_ready;
+    if (s_flash_inited)
+    {
+        uint32_t max_seq = 0u;
+        app_store_header_t h;
+        for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+        {
+            if (app_store_header_read_locked(slot, &h))
+            {
+                const uint32_t seq = h.reserved[0];
+                if ((seq != APP_STORE_SEQ_UNUSED) && (seq > max_seq))
+                {
+                    max_seq = seq;
+                }
+            }
+        }
+        s_task_seq_next = (max_seq == 0u) ? 1u : (max_seq + 1u);
+    }
     return s_layout_ready;
 }
 
@@ -579,7 +600,7 @@ static bool app_store_header_read_locked(uint8_t slot, app_store_header_t *out)
     return true;
 }
 
-static bool app_store_header_write_locked(uint8_t slot, uint64_t task_id, const app_storage_task_meta_t *meta)
+static bool app_store_header_write_locked(uint8_t slot, uint64_t task_id, const app_storage_task_meta_t *meta, uint32_t seq)
 {
     const uint32_t base = app_store_slot_base(slot);
     if (!app_store_flash_erase_sector_locked(base))
@@ -596,6 +617,7 @@ static bool app_store_header_write_locked(uint8_t slot, uint64_t task_id, const 
     {
         h.meta = *meta;
     }
+    h.reserved[0] = seq;
     const uint32_t crc_len = (uint32_t)(offsetof(app_store_header_t, header_crc) - offsetof(app_store_header_t, version));
     h.header_crc = BSP_CRC_Calculate(&h.version, crc_len, BSP_CRC_WIDTH_32);
 
@@ -681,6 +703,26 @@ static bool app_store_ensure_erased_range_locked(uint32_t *next_erase, uint32_t 
     return true;
 }
 
+static uint8_t app_store_select_evict_slot_locked(void)
+{
+    uint8_t best_slot = 0u;
+    uint32_t best_seq = 0xFFFFFFFFu;
+    app_store_header_t h;
+    for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+    {
+        if (app_store_header_read_locked(slot, &h))
+        {
+            const uint32_t seq = h.reserved[0];
+            if (seq < best_seq)
+            {
+                best_seq = seq;
+                best_slot = slot;
+            }
+        }
+    }
+    return best_slot;
+}
+
 static bool app_store_open_locked(uint64_t task_id, bool create, const app_storage_task_meta_t *meta)
 {
     if (s_active.valid && (s_active.task_id == task_id))
@@ -703,7 +745,8 @@ static bool app_store_open_locked(uint64_t task_id, bool create, const app_stora
 
     if ((found_slot != 0xFFu) && create)
     {
-        if (!app_store_header_write_locked(found_slot, task_id, meta))
+        const uint32_t seq = (s_task_seq_next != 0u) ? s_task_seq_next++ : 1u;
+        if (!app_store_header_write_locked(found_slot, task_id, meta, seq))
         {
             return false;
         }
@@ -726,10 +769,11 @@ static bool app_store_open_locked(uint64_t task_id, bool create, const app_stora
         }
         if (found_slot == 0xFFu)
         {
-            found_slot = 0u;
+            found_slot = app_store_select_evict_slot_locked();
         }
 
-        if (!app_store_header_write_locked(found_slot, task_id, meta))
+        const uint32_t seq = (s_task_seq_next != 0u) ? s_task_seq_next++ : 1u;
+        if (!app_store_header_write_locked(found_slot, task_id, meta, seq))
         {
             return false;
         }
