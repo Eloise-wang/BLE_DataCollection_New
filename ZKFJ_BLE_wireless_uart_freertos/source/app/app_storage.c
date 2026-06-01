@@ -600,7 +600,7 @@ static bool app_store_flash_erase_block_64k_locked(uint32_t block_addr)
             continue;
         }
 
-        if (Nor_Flash_Erase_Block_64K(&s_norHandle, block_addr))
+        if (Nor_Flash_Erase_Block_64K(&s_norHandle, block_addr) == kStatus_Success)
         {
             return (app_store_wait_ready(5000u) == 0);
         }
@@ -894,6 +894,8 @@ bool APP_Storage_Init(void)
 
 bool APP_Storage_EraseAllAsync(app_storage_erase_progress_fn callback)
 {
+    (void)APP_Storage_Init();
+
     app_store_erase_req_t req;
     req.mode     = 1U;
     req.task_id  = 0U;
@@ -909,6 +911,8 @@ bool APP_Storage_EraseAllAsync(app_storage_erase_progress_fn callback)
 
 bool APP_Storage_DeleteTaskAsync(uint64_t task_id, app_storage_erase_progress_fn callback)
 {
+    (void)APP_Storage_Init();
+
     app_store_erase_req_t req;
     req.mode     = 0U;
     req.task_id  = task_id;
@@ -1425,6 +1429,8 @@ void APP_Storage_EraseTask(void *pvParameters)
             if (found)
             {
                 /* 找到任务，现在擦除整个slot */
+                BSP_UART_Print("[STO] DeleteTask: slot_base=0x%08X blocks=%u\r\n",
+                              (unsigned)target_slot_base, (unsigned)target_blocks);
                 for (uint32_t block = 0u; block < target_blocks; block++)
                 {
                     const uint32_t block_addr = target_slot_base + (block * 64u * 1024u);
@@ -1436,6 +1442,7 @@ void APP_Storage_EraseTask(void *pvParameters)
                     if (req.callback != NULL)
                     {
                         const uint8_t progress = (uint8_t)(((block + 1U) * 100U) / target_blocks);
+                        BSP_UART_Print("[STO] Delete progress: %u%% (%u/%u)\r\n", progress, block + 1U, target_blocks);
                         req.callback(progress);
                     }
                 }
