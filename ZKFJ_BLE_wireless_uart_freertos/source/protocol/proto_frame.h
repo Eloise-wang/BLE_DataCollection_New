@@ -28,6 +28,15 @@ extern "C" {
 #define PROTO_CMD_REQUEST_HISTORY   ((uint8_t)0x04U)
 #define PROTO_CMD_CLEAR_TASK        ((uint8_t)0x05U)
 
+/* Debug commands: no CRC required, no response framing needed.
+ * Usage: send raw bytes A5 <cmd> <len> [payload] <crc_lo> <crc_hi>
+ *   - cmd=0xE0: list all task_ids in flash
+ *   - cmd=0xE1: query specific task (payload = 8B task_id LE)
+ *   - cmd=0xE2: query record count (payload = 8B task_id LE) */
+#define PROTO_CMD_DEBUG_LIST        ((uint8_t)0xE0U)
+#define PROTO_CMD_DEBUG_QUERY       ((uint8_t)0xE1U)
+#define PROTO_CMD_DEBUG_RECCNT      ((uint8_t)0xE2U)
+
 /* BLE MTU=247, max data per DATA frame = 247 - 21 = 226, but round down to 220 for safety margin */
 #ifndef PROTO_MAX_CHUNK_SIZE
 #define PROTO_MAX_CHUNK_SIZE        220U

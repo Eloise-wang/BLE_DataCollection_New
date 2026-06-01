@@ -71,6 +71,10 @@ bool APP_Storage_GetMetaSize(uint64_t task_id, uint32_t *out_size);
 // 删除任务
 bool APP_Storage_DeleteTask(uint64_t task_id);
 
+// 遍历所有任务，返回找到的任务数量，out_ids 和 out_count 上限为 max_count
+// 返回实际写入 out_ids 的任务数量（最大为 max_count）
+uint8_t APP_Storage_ListTasks(uint64_t *out_ids, uint8_t max_count);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1222,3 +1222,33 @@ bool APP_Storage_DeleteTask(uint64_t task_id)
     app_store_unlock();
     return ok;
 }
+
+uint8_t APP_Storage_ListTasks(uint64_t *out_ids, uint8_t max_count)
+{
+    if ((out_ids == NULL) || (max_count == 0U))
+    {
+        return 0U;
+    }
+
+    uint8_t count = 0U;
+
+    app_store_lock();
+    if (app_store_flash_init_locked())
+    {
+        app_store_header_t h;
+        for (uint8_t slot = 0U; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+        {
+            if (app_store_header_read_locked(slot, &h))
+            {
+                if (count < max_count)
+                {
+                    out_ids[count] = h.task_id;
+                    count++;
+                }
+            }
+        }
+    }
+    app_store_unlock();
+
+    return count;
+}

@@ -96,6 +96,16 @@ bool PROTO_FrameParseByte(proto_parser_t *p, uint8_t byte, proto_cmd_frame_t *ou
         {
             p->crc_rx |= (uint16_t)((uint16_t)byte << 8);
 
+            /* Debug commands (0xE0-0xEF) bypass CRC check for quick testing */
+            const bool is_debug_cmd = ((p->frame.cmd & 0xF0U) == 0xE0U);
+
+            if (is_debug_cmd)
+            {
+                *out_frame = p->frame;
+                proto_reset(p);
+                return true;
+            }
+
             uint8_t crc_buf[2 + 255];
             crc_buf[0] = p->frame.cmd;
             crc_buf[1] = p->frame.len;

@@ -104,6 +104,20 @@ static bool proto_payload_read_u16_le(const uint8_t *p, size_t len, uint16_t *ou
     return true;
 }
 
+/* Convert uint64_t to 16-char little-endian hex string (LSB first) */
+static void proto_u64_to_hex_le(char *out16, uint64_t v)
+{
+    static const char h[] = "0123456789ABCDEF";
+    /* bytes[0] = lowest byte (little-endian), bytes[7] = highest byte */
+    const uint8_t *bytes = (const uint8_t *)&v;
+    for (uint8_t i = 0U; i < 8U; i++)
+    {
+        out16[i * 2U]     = h[(bytes[i] >> 4) & 0xFU];  /* high nibble */
+        out16[i * 2U + 1] = h[bytes[i] & 0xFU];          /* low nibble */
+    }
+    out16[16U] = '\0';
+}
+
 void PROTO_CmdInit(void)
 {
     if (s_cmd_queue == NULL)
@@ -464,6 +478,140 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
     TASK_SetHistorySending(false);
 }
 
+/* ---------- Debug commands: 0xE0 / 0xE1 / 0xE2 ---------- */
+
+/* 0xE0: List all task_ids stored in flash.
+ * Response: plain text printed via BSP_UART_Print.
+ * Request format: A5 E0 00 CRC_LO CRC_HI */
+static void proto_handle_debug_list(const proto_cmd_msg_t *msg)
+{
+    (void)msg;
+    (void)APP_Storage_Init();
+
+    BSP_UART_Print("[DBG] === Task List ===\r\n");
+
+    uint64_t ids[4];
+    uint8_t n = APP_Storage_ListTasks(ids, 4U);
+    if (n == 0U)
+    {
+        BSP_UART_Print("  (empty)\r\n");
+    }
+    else
+    {
+        for (uint8_t i = 0U; i < n; i++)
+        {
+        char hex_str[17];
+        proto_u64_to_hex_le(hex_str, ids[i]);
+        BSP_UART_Print("  [%u] %s\r\n", (unsigned)i, hex_str);
+        }
+    }
+    BSP_UART_Print("[DBG] === %u tasks ===\r\n", (unsigned)n);
+}
+
+/* 0xE1: Query a specific task_id.
+ * Request payload (8 bytes LE): task_id.
+ * Response: plain text printed via BSP_UART_Print.
+ * Request format: A5 E1 08 <task_id(8)> CRC_LO CRC_HI */
+static void proto_handle_debug_query(const proto_cmd_msg_t *msg)
+{
+    uint64_t task_id;
+    if (!proto_payload_read_u64_le(msg->payload, msg->len, &task_id))
+    {
+        BSP_UART_Print("[DBG] ERR: need 8B task_id\r\n");
+        return;
+    }
+
+    (void)APP_Storage_Init();
+
+    uint32_t data_bytes = 0U;
+    uint32_t pre_bytes  = 0U;
+    uint32_t meta_bytes = 0U;
+
+    bool exists = APP_Storage_GetDataSize(task_id, &data_bytes);
+    (void)APP_Storage_GetPreDataSize(task_id, &pre_bytes);
+    (void)APP_Storage_GetMetaSize(task_id, &meta_bytes);
+
+    char hex_str[17];
+    proto_u64_to_hex_le(hex_str, task_id);
+    BSP_UART_Print("[DBG] === Task %s ===\r\n", hex_str);
+    BSP_UART_Print("  found=%u\r\n", exists ? 1U : 0U);
+    BSP_UART_Print("  data_bytes=%lu\r\n", (unsigned long)data_bytes);
+    BSP_UART_Print("  pre_bytes=%lu\r\n",  (unsigned long)pre_bytes);
+    BSP_UART_Print("  meta_bytes=%lu\r\n", (unsigned long)meta_bytes);
+
+    if (meta_bytes > 0U)
+    {
+        app_storage_task_meta_t meta;
+        if (APP_Storage_ReadMeta(task_id, 0U, &meta, (uint32_t)sizeof(meta)) == (int)sizeof(meta))
+        {
+            BSP_UART_Print("  record_size=%lu version=%lu\r\n",
+                           (unsigned long)meta.record_size,
+                           (unsigned long)meta.record_version);
+            BSP_UART_Print("  start_ts=%lu sample_ms=%lu duration_ms=%lu\r\n",
+                           (unsigned long)meta.start_timestamp_ms,
+                           (unsigned long)meta.sample_period_ms,
+                           (unsigned long)meta.duration_ms);
+        }
+    }
+
+    /* calculate record count from data_bytes (record_size=20B) */
+    if ((data_bytes > 0U) && (meta_bytes > 0U))
+    {
+        app_storage_task_meta_t meta;
+        if (APP_Storage_ReadMeta(task_id, 0U, &meta, (uint32_t)sizeof(meta)) == (int)sizeof(meta))
+        {
+            uint32_t rec_size = meta.record_size;
+            if (rec_size < 4U) { rec_size = 20U; }
+            BSP_UART_Print("  record_count=%lu\r\n", (unsigned long)(data_bytes / rec_size));
+        }
+    }
+    BSP_UART_Print("[DBG] ===================\r\n");
+}
+
+/* 0xE2: Query record count only (quick version of 0xE1).
+ * Request payload (8 bytes LE): task_id.
+ * Response: plain text printed via BSP_UART_Print. */
+static void proto_handle_debug_reccnt(const proto_cmd_msg_t *msg)
+{
+    uint64_t task_id;
+    if (!proto_payload_read_u64_le(msg->payload, msg->len, &task_id))
+    {
+        BSP_UART_Print("[DBG] ERR: need 8B task_id\r\n");
+        return;
+    }
+
+    (void)APP_Storage_Init();
+
+    uint32_t data_bytes = 0U;
+    uint32_t meta_bytes = 0U;
+
+    bool exists = APP_Storage_GetDataSize(task_id, &data_bytes);
+    (void)APP_Storage_GetMetaSize(task_id, &meta_bytes);
+
+    char hex_str[17];
+    proto_u64_to_hex_le(hex_str, task_id);
+
+    if (!exists || (meta_bytes == 0U) || (data_bytes == 0U))
+    {
+        BSP_UART_Print("[DBG] task=%s rec_count=0 found=%u\r\n", hex_str, exists ? 1U : 0U);
+        return;
+    }
+
+    app_storage_task_meta_t meta;
+    if (APP_Storage_ReadMeta(task_id, 0U, &meta, (uint32_t)sizeof(meta)) == (int)sizeof(meta))
+    {
+        uint32_t rec_size = meta.record_size;
+        if (rec_size < 4U) { rec_size = 20U; }
+        BSP_UART_Print("[DBG] task=%s rec_count=%lu\r\n",
+                       hex_str,
+                       (unsigned long)(data_bytes / rec_size));
+    }
+    else
+    {
+        BSP_UART_Print("[DBG] task=%s rec_count=? (meta read fail)\r\n", hex_str);
+    }
+}
+
 void PROTO_CmdTask(void *pvParameters)
 {
     (void)pvParameters;
@@ -492,6 +640,15 @@ void PROTO_CmdTask(void *pvParameters)
                     break;
                 case PROTO_CMD_CLEAR_TASK:
                     proto_handle_clear_task(&msg);
+                    break;
+                case PROTO_CMD_DEBUG_LIST:
+                    proto_handle_debug_list(&msg);
+                    break;
+                case PROTO_CMD_DEBUG_QUERY:
+                    proto_handle_debug_query(&msg);
+                    break;
+                case PROTO_CMD_DEBUG_RECCNT:
+                    proto_handle_debug_reccnt(&msg);
                     break;
                 default:
                     proto_send_ack(msg.cmd, PROTO_STATUS_CMD_UNSUPPORTED);
