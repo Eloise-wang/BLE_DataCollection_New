@@ -354,24 +354,15 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
         return;
     }
 
-    /* 获取总字节数 */
+    /* 获取总字节数：只支持 file_sel=0（正式采集数据），其余返回 NOT_FOUND */
     uint32_t total_bytes = 0U;
     switch (file_sel)
     {
         case 0U:
             (void)APP_Storage_GetDataSize(task_id, &total_bytes);
             break;
-        case 1U:
-            (void)APP_Storage_GetPreDataSize(task_id, &total_bytes);
-            break;
-        case 2U:
-            (void)APP_Storage_GetMetaSize(task_id, &total_bytes);
-            break;
-        case 3U:
-            (void)APP_Storage_GetLogSize(task_id, &total_bytes);
-            break;
         default:
-            proto_send_ack(msg->cmd, PROTO_STATUS_PARAM_ERROR);
+            proto_send_ack(msg->cmd, PROTO_STATUS_NOT_FOUND);
             return;
     }
 
@@ -430,16 +421,8 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
             case 0U:
                 nread = APP_Storage_ReadData(task_id, pos, data_buf, (uint32_t)to_read);
                 break;
-            case 1U:
-                nread = APP_Storage_ReadPreData(task_id, pos, data_buf, (uint32_t)to_read);
-                break;
-            case 2U:
-                nread = APP_Storage_ReadMeta(task_id, pos, data_buf, (uint32_t)to_read);
-                break;
-            case 3U:
-                nread = APP_Storage_ReadLog(task_id, pos, data_buf, (uint32_t)to_read);
-                break;
             default:
+                nread = -1;
                 break;
         }
         if (nread <= 0)
