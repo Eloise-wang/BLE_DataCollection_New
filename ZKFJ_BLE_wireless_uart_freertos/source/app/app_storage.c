@@ -30,7 +30,7 @@
 
 #define APP_STORE_MAGIC          0x474F4C53u
 #define APP_STORE_VERSION        1u
-#define APP_STORE_SLOT_COUNT     4u
+#define APP_STORE_SLOT_COUNT     8u
 #if defined(DEBUG)
 #define APP_STORE_WRITE_VERIFY_ENABLE 1u
 #else
