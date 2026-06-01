@@ -615,6 +615,9 @@ status_t LPSPI_MemWritePage(uint32_t addr, uint8_t *buffer, uint32_t lengthInByt
         if (true == blocking)
         {
             status = LPSPI_MemWaitBusy(base);
+            // 等待program完成后再额外稳定一段时间，确保flash内部数据可靠后再开始验证读取
+            // 根因：sample=2113时program pipeline未完成就开始了验证读，导致VerifyRetryOk
+            OSA_TimeDelay(1u);
         }
     } while (false);
 

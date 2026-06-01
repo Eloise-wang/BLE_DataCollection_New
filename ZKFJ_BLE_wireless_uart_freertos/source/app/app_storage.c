@@ -756,7 +756,7 @@ static bool app_store_open_locked(uint64_t task_id, bool create, const app_stora
     uint32_t record_size = h.meta.record_size;
     if ((record_size < 4u) || (record_size > 256u))
     {
-        record_size = 18u;
+        record_size = 20u;
     }
 
     const uint32_t pre_base = app_store_pre_base(found_slot);
@@ -885,13 +885,20 @@ bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t recor
         cap = app_store_data_capacity();
         before_size = s_active.data_size;
         next_erase = s_active.data_next_erase;
-        if (s_active.data_size + record_size <= cap)
+            if (s_active.data_size + record_size <= cap)
         {
             addr = base + s_active.data_size;
             if (app_store_ensure_erased_range_locked(&s_active.data_next_erase, addr, record_size))
             {
-                ok = app_store_flash_prog_locked(addr + 4u, ((const uint8_t *)record) + 4u, record_size - 4u) &&
-                     app_store_flash_prog_locked(addr, record, 4u);
+                // 20字节记录跨页边界(NOR Flash每页256字节)：先写头16字节，再写尾4字节
+                // 顺序调换原因：先写头确保tail(4B)所在页的sector已被erase(next_erase已对齐)
+                // 两次program间额外等待：确保第一次的内部pipeline完全清空后再发第二次Write-Enable
+                ok = app_store_flash_prog_locked(addr, record, 16u);
+                if (ok)
+                {
+                    OSA_TimeDelay(2u);
+                    ok = app_store_flash_prog_locked(addr + 16u, ((const uint8_t *)record) + 16u, 4u);
+                }
                 if (ok)
                 {
                     s_active.data_size += record_size;
@@ -941,8 +948,15 @@ bool APP_Storage_AppendPreData(uint64_t task_id, const void *record, uint32_t re
             addr = base + s_active.pre_size;
             if (app_store_ensure_erased_range_locked(&s_active.pre_next_erase, addr, record_size))
             {
-                ok = app_store_flash_prog_locked(addr + 4u, ((const uint8_t *)record) + 4u, record_size - 4u) &&
-                     app_store_flash_prog_locked(addr, record, 4u);
+                // 20字节记录跨页边界(NOR Flash每页256字节)：先写头16字节，再写尾4字节
+                // 顺序调换原因：先写头确保tail(4B)所在页的sector已被erase(next_erase已对齐)
+                // 两次program间额外等待：确保第一次的内部pipeline完全清空后再发第二次Write-Enable
+                ok = app_store_flash_prog_locked(addr, record, 16u);
+                if (ok)
+                {
+                    OSA_TimeDelay(2u);
+                    ok = app_store_flash_prog_locked(addr + 16u, ((const uint8_t *)record) + 16u, 4u);
+                }
                 if (ok)
                 {
                     s_active.pre_size += record_size;

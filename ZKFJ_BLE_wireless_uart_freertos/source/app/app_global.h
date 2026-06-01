@@ -22,7 +22,7 @@ extern "C" {
 #define APP_PACKED
 #endif
 
-// 传感器数据结构体对齐
+// 传感器数据结构体（精确20字节，满足2字节对齐）
 typedef struct APP_PACKED
 {
     uint32_t timestamp_s;
@@ -33,6 +33,7 @@ typedef struct APP_PACKED
     uint32_t remaining_count;
     uint8_t liquid_access_state;
     uint8_t status;
+    uint8_t reserved[2];  // 精确20字节，2字节对齐，跨页写入概率大幅降低（跨256字节边界的周期从18变为20）
 } sensor_record_t;
 
 typedef uint8_t app_cmd_t;

@@ -239,6 +239,25 @@ static TIMER_MANAGER_HANDLE_DEFINE(mUartStreamFlushTimerId);
 static TIMER_MANAGER_HANDLE_DEFINE(mBatteryMeasurementTimerId);
 static TIMER_MANAGER_HANDLE_DEFINE(mStatusReportTimerId);
 
+/* BLE TX 流量控制：BLE通知异步发送，每帧后加定时器延迟，防止控制器TX缓冲区满导致丢帧 */
+static SemaphoreHandle_t s_tx_done_sem = NULL;
+static StaticSemaphore_t s_tx_done_sem_buffer;
+static TimerHandle_t s_tx_delay_timer = NULL;
+static StaticTimer_t s_tx_delay_timer_buffer;
+static volatile bool s_tx_delay_done = false;
+
+static void BleApp_TxDelayTimerCallback(TimerHandle_t xTimer)
+{
+    (void)xTimer;
+    s_tx_delay_done = true;
+    if (s_tx_done_sem != NULL)
+    {
+        BaseType_t higher_woken = pdFALSE;
+        (void)xSemaphoreGiveFromISR(s_tx_done_sem, &higher_woken);
+        portYIELD_FROM_ISR(higher_woken);
+    }
+}
+
 
 static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user);
 
@@ -1521,6 +1540,11 @@ static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user)
         return;
     }
 
+    if (s_tx_done_sem == NULL)
+    {
+        s_tx_done_sem = xSemaphoreCreateBinaryStatic(&s_tx_done_sem_buffer);
+    }
+
     uint16_t cccdHandle = gGattDbInvalidHandle_d;
     bool_t isNotifActive = FALSE;
 
@@ -1533,6 +1557,20 @@ static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user)
     if (chunkMax == 0U)
     {
         chunkMax = (uint16_t)gAttMaxWriteDataSize_d(gAttMaxMtu_c);
+    }
+
+    /* 确保信号量和定时器已初始化 */
+    if (s_tx_done_sem == NULL)
+    {
+        s_tx_done_sem = xSemaphoreCreateBinaryStatic(&s_tx_done_sem_buffer);
+    }
+    if (s_tx_delay_timer == NULL)
+    {
+        s_tx_delay_timer = xTimerCreateStatic("TxDelay",
+                                               pdMS_TO_TICKS(3U),
+                                               pdFALSE,
+                                               &s_tx_delay_timer_buffer,
+                                               BleApp_TxDelayTimerCallback);
     }
 
     size_t pos = 0U;
@@ -1568,6 +1606,16 @@ static void BleApp_ProtoTxBle(const uint8_t *data, size_t len, void *user)
         {
             return;
         }
+
+        /* BLE通知异步发送：启动3ms定时器，等待期间BLE控制器完成无线传输
+         * 定时器到期后在中断中释放信号量，确保每帧之间有足够时间清空TX缓冲区
+         * 配合proto_cmd_handler.c中vTaskDelay(5ms)，双重保障防止丢帧 */
+        s_tx_delay_done = false;
+        if (s_tx_delay_timer != NULL)
+        {
+            (void)xTimerReset(s_tx_delay_timer, portMAX_DELAY);
+        }
+        (void)xSemaphoreTake(s_tx_done_sem, pdMS_TO_TICKS(10U));
 
         pos += chunkLen;
     }
