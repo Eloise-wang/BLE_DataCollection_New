@@ -31,6 +31,7 @@ extern void TASK_SensorCollectTask(void *pvParameters);
 extern void TASK_StorageTask(void *pvParameters);
 extern void TASK_LedTask(void *pvParameters);
 extern void TASK_WatchdogTask(void *pvParameters);
+extern void APP_Storage_EraseTask(void *pvParameters);
 
 void TASK_InitPipelineResources(void)
 {
@@ -61,6 +62,7 @@ void TASK_CreateAllTasks(void)
     (void)xTaskCreate(TASK_SensorCollectTask, "Task_Sensor", TASK_STACK_SENSOR, NULL, 3U, NULL);
     (void)xTaskCreate(TASK_StorageTask, "Task_Storage", TASK_STACK_STORAGE, NULL, 2U, NULL);
     (void)xTaskCreate(TASK_LedTask, "Task_Led", TASK_STACK_LED, NULL, 1U, NULL);
+    (void)xTaskCreate(APP_Storage_EraseTask, "Task_Erase", TASK_STACK_SENSOR, NULL, 2U, NULL);
 }
 
 uint64_t TASK_GetActiveTaskId(void)

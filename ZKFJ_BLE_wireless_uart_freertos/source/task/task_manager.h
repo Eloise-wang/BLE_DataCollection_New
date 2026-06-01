@@ -56,6 +56,8 @@ extern EventGroupHandle_t g_system_event_group;
 #define TASK_EVENT_BIT_BLE_CONNECTED     (1U << 4)
 #define TASK_EVENT_BIT_HISTORY_SENDING   (1U << 5)
 #define TASK_EVENT_BIT_COLLECTION_PULSE  (1U << 6)
+// 擦除Flash进行中
+#define TASK_EVENT_BIT_ERASING           (1U << 7)
 
 
 // 初始化任务管道资源

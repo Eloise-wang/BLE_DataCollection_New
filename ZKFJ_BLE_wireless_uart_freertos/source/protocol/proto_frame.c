@@ -232,7 +232,7 @@ bool PROTO_DataBuildFrame(uint64_t task_id,
 
 bool PROTO_StatusBuildFrame(uint64_t task_id,
                             uint32_t event_bits,
-                            uint8_t battery_percent,
+                            uint8_t erase_progress,
                             uint8_t *out,
                             size_t out_size,
                             size_t *out_len)
@@ -264,7 +264,7 @@ bool PROTO_StatusBuildFrame(uint64_t task_id,
     out[pos++] = (uint8_t)((event_bits >> 16) & 0xFFU);
     out[pos++] = (uint8_t)((event_bits >> 24) & 0xFFU);
 
-    out[pos++] = battery_percent;
+    out[pos++] = erase_progress;
     out[pos++] = 0U;
 
     const uint16_t crc = proto_crc16_calc(&out[1], (size_t)2U + (size_t)payload_len);

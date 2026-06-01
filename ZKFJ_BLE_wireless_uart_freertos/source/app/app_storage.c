@@ -12,6 +12,7 @@
 
 #include "bsp_uart.h"
 #include "bsp_crc.h"
+#include "task_manager.h"
 
 #include "board.h"
 #include "fsl_clock.h"
@@ -79,6 +80,18 @@ static uint32_t s_pre_capacity;
 static uint32_t s_task_seq_next;
 
 static app_store_task_state_t s_active;
+
+/* 异步擦除任务队列 */
+typedef struct
+{
+    uint8_t mode;           /* 0=删除单个任务, 1=格式化全部 */
+    uint64_t task_id;       /* mode=0时有效 */
+    app_storage_erase_progress_fn callback;
+} app_store_erase_req_t;
+
+static QueueHandle_t s_erase_queue;
+static StaticQueue_t s_erase_queue_buffer;
+static uint8_t s_erase_queue_storage[8 * sizeof(app_store_erase_req_t)];
 
 typedef enum
 {
@@ -568,6 +581,38 @@ static bool app_store_flash_erase_sector_locked(uint32_t addr)
     return false;
 }
 
+/* 带重试机制的64KB块擦除（用于EraseAll和DeleteTask） */
+static bool app_store_flash_erase_block_64k_locked(uint32_t block_addr)
+{
+    if (s_norHandle.driverBaseAddr == NULL)
+    {
+        app_store_set_err(APP_STORE_ERR_INIT, kStatus_Fail, block_addr, 0u);
+        return false;
+    }
+    const uint32_t max_attempts = 4u;
+    for (uint32_t attempt = 0u; attempt < max_attempts; attempt++)
+    {
+        if (app_store_wait_ready(5000u) != 0)
+        {
+            app_store_flash_recover_locked();
+            const uint32_t backoff_ms = 2u << (attempt < 3u ? attempt : 3u);
+            OSA_TimeDelay(backoff_ms);
+            continue;
+        }
+
+        if (Nor_Flash_Erase_Block_64K(&s_norHandle, block_addr))
+        {
+            return (app_store_wait_ready(5000u) == 0);
+        }
+
+        app_store_set_err(APP_STORE_ERR_ERASE, kStatus_Fail, block_addr, 64u * 1024u);
+        app_store_flash_recover_locked();
+        const uint32_t backoff_ms = 2u << (attempt < 3u ? attempt : 3u);
+        OSA_TimeDelay(backoff_ms);
+    }
+    return false;
+}
+
 static bool app_store_header_read_locked(uint8_t slot, app_store_header_t *out)
 {
     if (out == NULL)
@@ -834,31 +879,47 @@ bool APP_Storage_Init(void)
         s_flash_mutex = xSemaphoreCreateMutex();
     }
 
+    /* 队列可以在调度器启动前创建，xQueueCreateStatic是安全的 */
+    if (s_erase_queue == NULL)
+    {
+        s_erase_queue = xQueueCreateStatic(8U, sizeof(app_store_erase_req_t),
+                                           s_erase_queue_storage, &s_erase_queue_buffer);
+    }
+
     app_store_lock();
     ok = app_store_flash_init_locked();
     app_store_unlock();
     return ok;
 }
 
-bool APP_Storage_EraseAll(void)
+bool APP_Storage_EraseAllAsync(app_storage_erase_progress_fn callback)
 {
-    app_store_lock();
-    if (!app_store_flash_init_locked())
+    app_store_erase_req_t req;
+    req.mode     = 1U;
+    req.task_id  = 0U;
+    req.callback = callback;
+
+    if (s_erase_queue == NULL)
     {
-        app_store_unlock();
         return false;
     }
 
-    for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+    return (xQueueSend(s_erase_queue, &req, 0U) == pdTRUE);
+}
+
+bool APP_Storage_DeleteTaskAsync(uint64_t task_id, app_storage_erase_progress_fn callback)
+{
+    app_store_erase_req_t req;
+    req.mode     = 0U;
+    req.task_id  = task_id;
+    req.callback = callback;
+
+    if (s_erase_queue == NULL)
     {
-        const uint32_t base = app_store_slot_base(slot);
-        (void)app_store_flash_erase_sector_locked(base);
-        (void)app_store_flash_erase_sector_locked(app_store_pre_base(slot));
-        (void)app_store_flash_erase_sector_locked(app_store_data_base(slot));
+        return false;
     }
-    (void)memset(&s_active, 0, sizeof(s_active));
-    app_store_unlock();
-    return true;
+
+    return (xQueueSend(s_erase_queue, &req, 0U) == pdTRUE);
 }
 
 bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta)
@@ -1241,30 +1302,7 @@ bool APP_Storage_GetMetaSize(uint64_t task_id, uint32_t *out_size)
 
 bool APP_Storage_DeleteTask(uint64_t task_id)
 {
-    bool ok = false;
-    app_store_lock();
-    if (app_store_flash_init_locked())
-    {
-        app_store_header_t h;
-        for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
-        {
-            if (app_store_header_read_locked(slot, &h) && (h.task_id == task_id))
-            {
-                const uint32_t base = app_store_slot_base(slot);
-                (void)app_store_flash_erase_sector_locked(base);
-                (void)app_store_flash_erase_sector_locked(app_store_pre_base(slot));
-                (void)app_store_flash_erase_sector_locked(app_store_data_base(slot));
-                if (s_active.valid && (s_active.task_id == task_id))
-                {
-                    (void)memset(&s_active, 0, sizeof(s_active));
-                }
-                ok = true;
-                break;
-            }
-        }
-    }
-    app_store_unlock();
-    return ok;
+    return APP_Storage_DeleteTaskAsync(task_id, NULL);
 }
 
 uint8_t APP_Storage_ListTasks(uint64_t *out_ids, uint8_t max_count)
@@ -1295,4 +1333,134 @@ uint8_t APP_Storage_ListTasks(uint64_t *out_ids, uint8_t max_count)
     app_store_unlock();
 
     return count;
+}
+
+void APP_Storage_EraseTask(void *pvParameters)
+{
+    (void)pvParameters;
+
+    for (;;)
+    {
+        if (s_erase_queue == NULL)
+        {
+            vTaskDelay(pdMS_TO_TICKS(100U));
+            continue;
+        }
+
+        app_store_erase_req_t req;
+        if (xQueueReceive(s_erase_queue, &req, portMAX_DELAY) != pdTRUE)
+        {
+            continue;
+        }
+
+        if (g_system_event_group != NULL)
+        {
+            (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
+        }
+
+        app_store_lock();
+        if (!app_store_flash_init_locked())
+        {
+            app_store_unlock();
+            if (req.callback != NULL)
+            {
+                req.callback(0U);
+            }
+            goto erase_done;
+        }
+
+        if (req.mode == 1U)
+        {
+            /* 格式化全部 - 分块擦除，每块处理完释放锁让其他操作有机会执行 */
+            const uint8_t total_slots = (uint8_t)APP_STORE_SLOT_COUNT;
+            const uint32_t blocks_per_slot = s_slot_size / (64u * 1024u);
+            const uint32_t total_blocks = (uint32_t)total_slots * blocks_per_slot;
+            uint32_t erased_blocks = 0U;
+
+            for (uint8_t slot = 0u; slot < total_slots; slot++)
+            {
+                const uint32_t slot_base = app_store_slot_base(slot);
+                for (uint32_t block = 0u; block < blocks_per_slot; block++)
+                {
+                    /* 每块擦除前加锁，完成后释放 */
+                    const uint32_t block_addr = slot_base + (block * 64u * 1024u);
+                    if (!app_store_flash_erase_block_64k_locked(block_addr))
+                    {
+                        /* 擦除失败，停止 */
+                        BSP_UART_Print("[STO] Erase failed at 0x%08X\r\n", (unsigned)block_addr);
+                        break;
+                    }
+                    erased_blocks++;
+                    const uint8_t progress = (uint8_t)((erased_blocks * 100U) / total_blocks);
+                    if (req.callback != NULL)
+                    {
+                        BSP_UART_Print("[STO] Erase progress: %u%% (slot %u/%u)\r\n",
+                                      progress, slot + 1U, total_slots);
+                        req.callback(progress);
+                    }
+                }
+            }
+            BSP_UART_Print("[STO] EraseAll done\r\n");
+            (void)memset(&s_active, 0, sizeof(s_active));
+        }
+        else if (req.mode == 0U)
+        {
+            /* 删除单个任务 - 先找到目标slot（持有锁），然后擦除（每块处理完释放锁） */
+            app_store_header_t h;
+            bool found = false;
+            uint32_t target_slot_base = 0U;
+            uint32_t target_blocks = 0U;
+
+            for (uint8_t slot = 0u; slot < (uint8_t)APP_STORE_SLOT_COUNT; slot++)
+            {
+                if (app_store_header_read_locked(slot, &h) && (h.task_id == req.task_id))
+                {
+                    target_slot_base = app_store_slot_base(slot);
+                    target_blocks = s_slot_size / (64u * 1024u);
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found)
+            {
+                /* 找到任务，现在擦除整个slot */
+                for (uint32_t block = 0u; block < target_blocks; block++)
+                {
+                    const uint32_t block_addr = target_slot_base + (block * 64u * 1024u);
+                    if (!app_store_flash_erase_block_64k_locked(block_addr))
+                    {
+                        BSP_UART_Print("[STO] Delete failed at 0x%08X\r\n", (unsigned)block_addr);
+                        break;
+                    }
+                    if (req.callback != NULL)
+                    {
+                        const uint8_t progress = (uint8_t)(((block + 1U) * 100U) / target_blocks);
+                        req.callback(progress);
+                    }
+                }
+                if (s_active.valid && (s_active.task_id == req.task_id))
+                {
+                    (void)memset(&s_active, 0, sizeof(s_active));
+                }
+                BSP_UART_Print("[STO] DeleteTask done\r\n");
+            }
+            else if (req.callback != NULL)
+            {
+                req.callback(0U);
+            }
+        }
+
+erase_done:
+        if (req.callback != NULL)
+        {
+            req.callback(100U);
+        }
+        app_store_unlock();
+
+        if (g_system_event_group != NULL)
+        {
+            (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
+        }
+    }
 }

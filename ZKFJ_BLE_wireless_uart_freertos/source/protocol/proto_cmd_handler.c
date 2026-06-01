@@ -17,7 +17,6 @@
 #include "app_storage.h"
 #include "bsp_uart.h"
 #include "proto_frame.h"
-#include "sensors.h"
 #include "task_manager.h"
 
 typedef struct
@@ -34,6 +33,7 @@ static proto_tx_fn_t s_tx_fn;
 static void *s_tx_user;
 static SemaphoreHandle_t s_tx_mutex;
 static bool s_ble_connected;
+static uint8_t s_erase_progress;
 
 #ifndef PROTO_STATUS_REPORT_ENABLE
 #define PROTO_STATUS_REPORT_ENABLE 1
@@ -57,6 +57,17 @@ static void proto_send(const uint8_t *data, size_t len)
             (void)xSemaphoreGive(s_tx_mutex);
         }
     }
+}
+
+void PROTO_SetEraseProgress(uint8_t progress)
+{
+    s_erase_progress = progress;
+}
+
+static void proto_on_erase_progress(uint8_t progress_percent)
+{
+    s_erase_progress = progress_percent;
+    PROTO_SendStatusNow();
 }
 
 static void proto_send_ack(uint8_t req_cmd, proto_status_t status)
@@ -157,11 +168,10 @@ void PROTO_SendStatusNow(void)
 #else
     const uint64_t task_id = TASK_GetActiveTaskId();
     const uint32_t bits = (g_system_event_group != NULL) ? (uint32_t)xEventGroupGetBits(g_system_event_group) : 0U;
-    const uint8_t bat = SENSORS_GetBatteryLevel();
 
     uint8_t buf[1 + 2 + 8 + 4 + 1 + 1 + 2];
     size_t out_len = 0U;
-    if (PROTO_StatusBuildFrame(task_id, bits, bat, buf, sizeof(buf), &out_len))
+    if (PROTO_StatusBuildFrame(task_id, bits, s_erase_progress, buf, sizeof(buf), &out_len))
     {
         proto_send(buf, out_len);
     }
@@ -311,18 +321,42 @@ static void proto_handle_clear_task(const proto_cmd_msg_t *msg)
     const uint8_t mode = msg->payload[8];
     if (mode == 0U)
     {
-        if (!APP_Storage_DeleteTask(task_id))
+        if (g_system_event_group != NULL)
         {
+            (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
+        }
+        if (!APP_Storage_DeleteTaskAsync(task_id, proto_on_erase_progress))
+        {
+            if (g_system_event_group != NULL)
+            {
+                (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
+            }
             proto_send_ack(msg->cmd, PROTO_STATUS_NOT_FOUND);
             return;
+        }
+        if (g_system_event_group != NULL)
+        {
+            (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
         }
     }
     else
     {
-        if (!APP_Storage_EraseAll())
+        if (g_system_event_group != NULL)
         {
+            (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
+        }
+        if (!APP_Storage_EraseAllAsync(proto_on_erase_progress))
+        {
+            if (g_system_event_group != NULL)
+            {
+                (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
+            }
             proto_send_ack(msg->cmd, PROTO_STATUS_STORAGE_ERROR);
             return;
+        }
+        if (g_system_event_group != NULL)
+        {
+            (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
         }
     }
 

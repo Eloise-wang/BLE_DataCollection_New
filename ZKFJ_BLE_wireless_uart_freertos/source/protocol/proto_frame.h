@@ -93,7 +93,7 @@ bool PROTO_DataBuildFrame(uint64_t task_id,
 
 bool PROTO_StatusBuildFrame(uint64_t task_id,
                             uint32_t event_bits,
-                            uint8_t battery_percent,
+                            uint8_t erase_progress,
                             uint8_t *out,
                             size_t out_size,
                             size_t *out_len);

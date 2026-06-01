@@ -34,9 +34,10 @@ void TASK_LedTask(void *pvParameters)
         const bool collectDone  = ((bits & TASK_EVENT_BIT_COLLECT_DONE) != 0U);
         const bool bleConnected = ((bits & TASK_EVENT_BIT_BLE_CONNECTED) != 0U);
         const bool historySend  = ((bits & TASK_EVENT_BIT_HISTORY_SENDING) != 0U);
+        const bool erasing      = ((bits & TASK_EVENT_BIT_ERASING) != 0U);
 
         BSP_LED_Set(BSP_LED_BLE, bleConnected);
-        BSP_LED_Set(BSP_LED_SEND, historySend);
+        BSP_LED_Set(BSP_LED_SEND, historySend || erasing);
 
         if ((g_system_event_group != NULL) && ((bits & TASK_EVENT_BIT_COLLECTION_PULSE) != 0U))
         {

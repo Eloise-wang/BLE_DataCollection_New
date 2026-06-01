@@ -38,9 +38,20 @@ typedef enum
     APP_STORAGE_PHASE_FORMAL  = 1,
 } app_storage_phase_t;
 
+// 进度回调类型，current=当前进度(1-100), 0=空闲/完成
+typedef void (*app_storage_erase_progress_fn)(uint8_t progress_percent);
+
 // 初始化存储
 bool APP_Storage_Init(void);
-bool APP_Storage_EraseAll(void);
+
+// 擦除任务后台线程（调用此函数创建后台任务）
+void APP_Storage_EraseTask(void *pvParameters);
+
+// 擦除所有数据（异步，立即返回）
+bool APP_Storage_EraseAllAsync(app_storage_erase_progress_fn callback);
+
+// 删除单个任务（异步，立即返回）
+bool APP_Storage_DeleteTaskAsync(uint64_t task_id, app_storage_erase_progress_fn callback);
 // 开始任务
 bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta);
 bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *meta, app_storage_phase_t phase);
