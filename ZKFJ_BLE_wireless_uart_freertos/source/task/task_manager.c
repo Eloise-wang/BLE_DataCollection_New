@@ -181,6 +181,7 @@ bool TASK_StopCollect(uint64_t task_id)
     }
 
     TASK_SetCollectEnabled(false);
+    TASK_MarkCollectDone();
     return true;
 }
 

@@ -61,13 +61,18 @@ void TASK_LedTask(void *pvParameters)
             (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_COLLECTION_PULSE);
         }
 
-        if (collectDone && !pretest)
+        const bool pulseActive = (now < collectionPulseUntil);
+        if (pulseActive)
+        {
+            BSP_LED_Set(BSP_LED_COLLECTION, true);
+        }
+        else if (collectDone && !pretest)
         {
             BSP_LED_Set(BSP_LED_COLLECTION, true);
         }
         else if (collecting)
         {
-            BSP_LED_Set(BSP_LED_COLLECTION, now < collectionPulseUntil);
+            BSP_LED_Set(BSP_LED_COLLECTION, false);
         }
         else
         {
