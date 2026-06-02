@@ -1091,40 +1091,6 @@ bool APP_Storage_AppendPreData(uint64_t task_id, const void *record, uint32_t re
     return ok;
 }
 
-bool APP_Storage_AppendLog(uint64_t task_id, const void *data, uint32_t size)
-{
-    (void)task_id;
-    (void)data;
-    (void)size;
-    return false;
-}
-
-bool APP_Storage_LogPrintf(uint64_t task_id, const char *format, ...)
-{
-    (void)task_id;
-    (void)format;
-    return false;
-}
-
-int APP_Storage_ReadLog(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
-{
-    (void)task_id;
-    (void)offset;
-    (void)out;
-    (void)size;
-    return -1;
-}
-
-bool APP_Storage_GetLogSize(uint64_t task_id, uint32_t *out_size)
-{
-    (void)task_id;
-    if (out_size != NULL)
-    {
-        *out_size = 0u;
-    }
-    return true;
-}
-
 int APP_Storage_ReadData(uint64_t task_id, uint32_t offset, void *out, uint32_t size)
 {
     if ((out == NULL) || (size == 0u))

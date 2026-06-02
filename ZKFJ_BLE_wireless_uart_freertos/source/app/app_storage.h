@@ -60,15 +60,6 @@ bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *me
 // 追加写入数据
 bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t record_size);
 bool APP_Storage_AppendPreData(uint64_t task_id, const void *record, uint32_t record_size);
-// 追加写入日志
-bool APP_Storage_AppendLog(uint64_t task_id, const void *data, uint32_t size);
-bool APP_Storage_LogPrintf(uint64_t task_id, const char *format, ...);
-
-// 从日志文件偏移量读取数据
-int APP_Storage_ReadLog(uint64_t task_id, uint32_t offset, void *out, uint32_t size);
-// 获取日志大小
-bool APP_Storage_GetLogSize(uint64_t task_id, uint32_t *out_size);
-
 // 从文件偏移量读取数据
 int APP_Storage_ReadData(uint64_t task_id, uint32_t offset, void *out, uint32_t size);
 int APP_Storage_ReadPreData(uint64_t task_id, uint32_t offset, void *out, uint32_t size);

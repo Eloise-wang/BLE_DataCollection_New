@@ -403,9 +403,6 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
         case 2U:
             (void)APP_Storage_GetMetaSize(task_id, &total_bytes);
             break;
-        case 3U:
-            (void)APP_Storage_GetLogSize(task_id, &total_bytes);
-            break;
         default:
             proto_send_ack(msg->cmd, PROTO_STATUS_PARAM_ERROR);
             return;
@@ -471,9 +468,6 @@ static void proto_handle_request_history(const proto_cmd_msg_t *msg)
                 break;
             case 2U:
                 nread = APP_Storage_ReadMeta(task_id, pos, data_buf, (uint32_t)to_read);
-                break;
-            case 3U:
-                nread = APP_Storage_ReadLog(task_id, pos, data_buf, (uint32_t)to_read);
                 break;
             default:
                 break;
