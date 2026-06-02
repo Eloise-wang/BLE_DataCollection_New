@@ -686,6 +686,56 @@ static uint32_t app_store_scan_committed_size_locked(uint32_t base, uint32_t cap
         return 0u;
     }
 
+    const uint32_t record_count = capacity / record_size;
+    if (record_count == 0u)
+    {
+        return 0u;
+    }
+
+    uint8_t head4[4];
+
+    if (!app_store_flash_read_locked(base, head4, (uint32_t)sizeof(head4)))
+    {
+        goto fallback_linear;
+    }
+    if ((head4[0] == 0xFFu) && (head4[1] == 0xFFu) && (head4[2] == 0xFFu) && (head4[3] == 0xFFu))
+    {
+        return 0u;
+    }
+
+    const uint32_t last_addr = base + ((record_count - 1u) * record_size);
+    if (!app_store_flash_read_locked(last_addr, head4, (uint32_t)sizeof(head4)))
+    {
+        goto fallback_linear;
+    }
+    if (!((head4[0] == 0xFFu) && (head4[1] == 0xFFu) && (head4[2] == 0xFFu) && (head4[3] == 0xFFu)))
+    {
+        return record_count * record_size;
+    }
+
+    uint32_t lo = 0u;
+    uint32_t hi = record_count;
+    while (lo < hi)
+    {
+        const uint32_t mid = lo + ((hi - lo) / 2u);
+        const uint32_t addr = base + (mid * record_size);
+        if (!app_store_flash_read_locked(addr, head4, (uint32_t)sizeof(head4)))
+        {
+            goto fallback_linear;
+        }
+        const bool erased = (head4[0] == 0xFFu) && (head4[1] == 0xFFu) && (head4[2] == 0xFFu) && (head4[3] == 0xFFu);
+        if (erased)
+        {
+            hi = mid;
+        }
+        else
+        {
+            lo = mid + 1u;
+        }
+    }
+    return lo * record_size;
+
+fallback_linear:
     uint32_t pos = 0u;
     uint8_t buf[256];
     while (pos < capacity)
