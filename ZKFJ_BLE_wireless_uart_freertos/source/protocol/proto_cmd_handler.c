@@ -305,8 +305,6 @@ static void proto_handle_stop_collect(const proto_cmd_msg_t *msg)
 
 static void proto_handle_clear_task(const proto_cmd_msg_t *msg)
 {
-    BSP_UART_Print("[PROTO] clear_task: cmd=%u len=%u\r\n", msg->cmd, msg->len);
-
     if (msg->len < (uint8_t)(8U + 1U))
     {
         proto_send_ack(msg->cmd, PROTO_STATUS_LEN_ERROR);
@@ -321,9 +319,6 @@ static void proto_handle_clear_task(const proto_cmd_msg_t *msg)
     }
 
     const uint8_t mode = msg->payload[8];
-    BSP_UART_Print("[PROTO] clear_task: task_id=0x%08X%08X mode=%u\r\n",
-                   (uint32_t)(task_id >> 32), (uint32_t)task_id, mode);
-
     if (mode == 0U)
     {
         if (g_system_event_group != NULL)
@@ -331,7 +326,6 @@ static void proto_handle_clear_task(const proto_cmd_msg_t *msg)
             (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
         }
         const bool sent = APP_Storage_DeleteTaskAsync(task_id, proto_on_erase_progress);
-        BSP_UART_Print("[PROTO] clear_task: DeleteTaskAsync=%d\r\n", (int)sent);
         if (!sent)
         {
             if (g_system_event_group != NULL)
@@ -353,7 +347,6 @@ static void proto_handle_clear_task(const proto_cmd_msg_t *msg)
             (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_ERASING);
         }
         const bool sent = APP_Storage_EraseAllAsync(proto_on_erase_progress);
-        BSP_UART_Print("[PROTO] clear_task: EraseAllAsync=%d\r\n", (int)sent);
         if (!sent)
         {
             if (g_system_event_group != NULL)
@@ -369,7 +362,6 @@ static void proto_handle_clear_task(const proto_cmd_msg_t *msg)
         }
     }
 
-    BSP_UART_Print("[PROTO] clear_task: sending ACK OK\r\n");
     proto_send_ack(msg->cmd, PROTO_STATUS_OK);
 }
 
