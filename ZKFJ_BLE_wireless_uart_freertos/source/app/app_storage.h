@@ -38,6 +38,17 @@ typedef enum
     APP_STORAGE_PHASE_FORMAL  = 1,
 } app_storage_phase_t;
 
+// 采集状态（持久化于任务 header 的 reserved[1]）：
+//   UNKNOWN   = 0xFFFFFFFF，空槽/旧固件遗留，视为不可续采
+//   RUNNING   = 采集进行中，复位后需续采
+//   COMPLETED = 已被 APP 停止或自然采完，不再续采（STOP 等同完成）
+typedef enum
+{
+    APP_STORE_STATE_UNKNOWN   = 0xFFFFFFFFu,
+    APP_STORE_STATE_RUNNING   = 1u,
+    APP_STORE_STATE_COMPLETED = 2u,
+} app_store_state_t;
+
 // 进度回调类型，current=当前进度(1-100), 0=空闲/完成
 typedef void (*app_storage_erase_progress_fn)(uint8_t progress_percent);
 
@@ -55,6 +66,23 @@ bool APP_Storage_DeleteTaskAsync(uint64_t task_id, app_storage_erase_progress_fn
 // 开始任务
 bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta);
 bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *meta, app_storage_phase_t phase);
+// 开始任务（扩展：额外持久化采集状态与绝对时间基准 host_epoch_s）
+bool APP_Storage_BeginTaskEx2(uint64_t task_id, const app_storage_task_meta_t *meta, app_storage_phase_t phase,
+                              app_store_state_t state, uint32_t host_epoch_s);
+
+// 更新任务的采集状态（仅重写 header，不动数据）。用于 STOP / 自然采完落盘 COMPLETED
+bool APP_Storage_SetTaskState(uint64_t task_id, app_store_state_t state);
+
+// 持久化"中断本次采集的复位原因/复位计数"到 header（reserved[3]/[4]）。
+// 续采时调用，记录"上次采集是被什么打断的"，可跨多次复位从 flash 查询。
+bool APP_Storage_SetTaskInterruptReason(uint64_t task_id, uint32_t reset_status, uint32_t reset_count);
+// 读取某任务持久化的中断复位原因/计数（reserved[3]/[4]）。未记录过时输出 0xFFFFFFFF。
+bool APP_Storage_GetTaskInterruptReason(uint64_t task_id, uint32_t *out_status, uint32_t *out_count);
+
+// 查找待续采任务：返回 state==RUNNING 且 seq 最大的任务；
+// 输出其 task_id / meta / 状态 / 绝对时间基准 host_epoch_s。未找到返回 false
+bool APP_Storage_FindResumable(uint64_t *out_task_id, app_storage_task_meta_t *out_meta,
+                               app_store_state_t *out_state, uint32_t *out_host_epoch_s);
 
 
 // 追加写入数据

@@ -11,6 +11,20 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+// 将 u64 格式化为 16 个十六进制字符（低字节在前，与协议线上/0xE0/0xE1 的 task_id 字节序一致）。
+// out 需 >= 17 字节。用于统一各处 task_id 的打印形式。
+static inline void BSP_UART_FormatU64LE(char *out17, uint64_t v)
+{
+    static const char h[] = "0123456789ABCDEF";
+    for (uint8_t i = 0U; i < 8U; i++)
+    {
+        const uint8_t b = (uint8_t)(v >> (8U * i));
+        out17[i * 2U]      = h[(b >> 4) & 0xFU];
+        out17[(i * 2U) + 1U] = h[b & 0xFU];
+    }
+    out17[16] = '\0';
+}
+
 #ifndef BSP_UART_ENABLE
 #define BSP_UART_ENABLE 1
 #endif

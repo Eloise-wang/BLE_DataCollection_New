@@ -301,6 +301,9 @@ static void proto_handle_stop_collect(const proto_cmd_msg_t *msg)
         return;
     }
 
+    /* 同步落盘 COMPLETED：STOP 等同采集完成，消除"停止后立即复位又续采"的窗口 */
+    (void)APP_Storage_SetTaskState(task_id, APP_STORE_STATE_COMPLETED);
+
     proto_send_ack(msg->cmd, PROTO_STATUS_OK);
 }
 
@@ -539,16 +542,33 @@ static void proto_handle_debug_list(const proto_cmd_msg_t *msg)
     BSP_UART_Print("[DBG] === %u tasks ===\r\n", (unsigned)n);
 }
 
+/* 打印本次上电锁存的复位原因（含复位计数）。与是否携带 task_id 无关，可单独查询。 */
+static void proto_print_reset_info(void)
+{
+    const uint32_t srs = BSP_WDOG_GetLatchedResetStatus();
+    char reason[96];
+    (void)BSP_WDOG_FormatResetReason(srs, reason, sizeof(reason));
+    BSP_UART_Print("  reset_status=0x%08lX wdog=%u rstcnt=%lu reason=%s\r\n",
+                   (unsigned long)srs,
+                   (unsigned)(BSP_WDOG_WasLatchedResetByWatchdog() ? 1U : 0U),
+                   (unsigned long)BSP_WDOG_GetLatchedResetCount(),
+                   reason);
+}
+
 /* 0xE1: Query a specific task_id.
  * Request payload (8 bytes LE): task_id.
  * Response: plain text printed via BSP_UART_Print.
- * Request format: A5 E1 08 <task_id(8)> CRC_LO CRC_HI */
+ * Request format: A5 E1 08 <task_id(8)> CRC_LO CRC_HI
+ * 若不带 payload，则仅打印最近一次复位原因（reset-only 查询）。 */
 static void proto_handle_debug_query(const proto_cmd_msg_t *msg)
 {
     uint64_t task_id;
     if (!proto_payload_read_u64_le(msg->payload, msg->len, &task_id))
     {
-        BSP_UART_Print("[DBG] ERR: need 8B task_id\r\n");
+        /* 无 task_id：仍然打印锁存的复位原因，便于直接查询"上次为什么复位" */
+        BSP_UART_Print("[DBG] reset-only query\r\n");
+        proto_print_reset_info();
+        BSP_UART_Print("[DBG] ===================\r\n");
         return;
     }
 
@@ -597,16 +617,28 @@ static void proto_handle_debug_query(const proto_cmd_msg_t *msg)
         }
     }
 
-    /* 复位原因（本次上电时锁存，便于事后调查异常复位/看门狗复位） */
+    /* 持久化的"中断本次采集的复位原因"（续采时写入 header，跨多次复位可查） */
     {
-        const uint32_t srs = BSP_WDOG_GetLatchedResetStatus();
-        char reason[96];
-        (void)BSP_WDOG_FormatResetReason(srs, reason, sizeof(reason));
-        BSP_UART_Print("  reset_status=0x%08lX wdog=%u reason=%s\r\n",
-                       (unsigned long)srs,
-                       (unsigned)(BSP_WDOG_WasLatchedResetByWatchdog() ? 1U : 0U),
-                       reason);
+        uint32_t irq_status = 0U;
+        uint32_t irq_count  = 0U;
+        if (APP_Storage_GetTaskInterruptReason(task_id, &irq_status, &irq_count))
+        {
+            if ((irq_status == 0xFFFFFFFFu) && (irq_count == 0xFFFFFFFFu))
+            {
+                BSP_UART_Print("  last_interrupt=(none)\r\n");
+            }
+            else
+            {
+                char irq_reason[96];
+                (void)BSP_WDOG_FormatResetReason(irq_status, irq_reason, sizeof(irq_reason));
+                BSP_UART_Print("  last_interrupt_status=0x%08lX cnt=%lu reason=%s\r\n",
+                               (unsigned long)irq_status, (unsigned long)irq_count, irq_reason);
+            }
+        }
     }
+
+    /* 复位原因（本次上电时锁存，便于事后调查异常复位/看门狗复位） */
+    proto_print_reset_info();
     BSP_UART_Print("[DBG] ===================\r\n");
 }
 

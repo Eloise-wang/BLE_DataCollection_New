@@ -41,6 +41,8 @@ bool BSP_WDOG_WasResetByWatchdog(void);
 // 首次调用 BSP_WDOG_GetResetStatus 时会自动锁存当前（即上一次复位的原因）SRS 值，
 // 锁存值不受后续 BSP_WDOG_ClearResetStatus 影响，便于复位后随时查询复位原因。
 uint32_t BSP_WDOG_GetLatchedResetStatus(void);
+// 获取本次上电锁存的复位计数（自上次冷复位以来的复位序列数），可判断是否反复复位。
+uint32_t BSP_WDOG_GetLatchedResetCount(void);
 // 在启动早期调用一次：锁存本次复位原因，并清零 SSRS（写 1 清除）。
 // 清零是必须的——SSRS 是"自上次冷复位以来、未被软件清除的"复位来源累加器，
 // 若不清零，历史置位会一直残留，导致下一次复位的原因被旧位污染。

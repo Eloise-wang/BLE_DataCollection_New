@@ -52,20 +52,26 @@ static OSA_TASK_DEFINE(start_task, gMainThreadPriority_c, 1, gMainThreadStackSiz
 
 static void start_task(void *argument)
 {
+    /* 尽早锁存本次复位原因（在任何可能改动 SSRS 的初始化之前），
+       并清零 SSRS，供启动打印及 0xE1 事后查询 */
+    BSP_WDOG_CaptureBootResetStatus();
+
     /* Start Application services (timers, serial manager, low power, led, button, etc..) */
     APP_InitServices();
 
     BSP_UART_Init();
-    /* 锁存本次复位原因并清零 SSRS，供启动打印及 0xE1 事后查询 */
-    BSP_WDOG_CaptureBootResetStatus();
     const uint32_t srs = BSP_WDOG_GetLatchedResetStatus();
     const bool wdog_reset = BSP_WDOG_WasLatchedResetByWatchdog();
+    const uint32_t rst_cnt = BSP_WDOG_GetLatchedResetCount();
     char reset_reason[96];
     (void)BSP_WDOG_FormatResetReason(srs, reset_reason, sizeof(reset_reason));
-    BSP_UART_Print("reset_status=0x%08lX wdog=%u reason=%s\r\n",
-                   (unsigned long)srs, (unsigned)wdog_reset, reset_reason);
+    BSP_UART_Print("reset_status=0x%08lX wdog=%u rstcnt=%lu reason=%s\r\n",
+                   (unsigned long)srs, (unsigned)wdog_reset, (unsigned long)rst_cnt, reset_reason);
 
     TASK_InitPipelineResources();
+    /* 复位（看门狗/掉电）后若存在 RUNNING 任务则续采；
+       必须在创建任务之前就绪，避免存储任务先执行擦除式 BeginTask 而丢失已采数据 */
+    TASK_ResumeCollect();
     TASK_CreateAllTasks();
 
     /* Start BLE Platform related ressources such as clocks, Link layer and HCI transport to Link Layer */

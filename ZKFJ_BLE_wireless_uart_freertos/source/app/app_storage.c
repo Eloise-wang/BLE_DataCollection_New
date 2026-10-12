@@ -619,58 +619,72 @@ static bool app_store_header_read_locked(uint8_t slot, app_store_header_t *out)
     {
         return false;
     }
-    (void)memset(out, 0, sizeof(*out));
-    if (!app_store_flash_read_locked(app_store_slot_base(slot), out, (uint32_t)sizeof(*out)))
-    {
-        return false;
-    }
-    if (out->magic != APP_STORE_MAGIC)
-    {
-        app_store_set_err(APP_STORE_ERR_HEADER_MAGIC, kStatus_Fail, app_store_slot_base(slot), (uint32_t)sizeof(*out));
-        return false;
-    }
-    if (out->version != APP_STORE_VERSION)
-    {
-        app_store_set_err(APP_STORE_ERR_HEADER_VERSION, kStatus_Fail, app_store_slot_base(slot), (uint32_t)sizeof(*out));
-        return false;
-    }
 
-    const uint32_t crc_len = (uint32_t)(offsetof(app_store_header_t, header_crc) - offsetof(app_store_header_t, version));
-    const uint32_t crc = BSP_CRC_Calculate(&out->version, crc_len, BSP_CRC_WIDTH_32);
-    if (crc != out->header_crc)
-    {
-        app_store_set_err(APP_STORE_ERR_HEADER_CRC, kStatus_Fail, app_store_slot_base(slot), (uint32_t)sizeof(*out));
-        return false;
-    }
-    return true;
-}
-
-static bool app_store_header_write_locked(uint8_t slot, uint64_t task_id, const app_storage_task_meta_t *meta, uint32_t seq)
-{
     const uint32_t base = app_store_slot_base(slot);
 
-    /* 诊断：确认 header 是否被(重)写，以及写入的 meta(周期/时长) */
-    BSP_UART_Print("[STO] hdr write slot=%u task=%08X%08X per=%lu dur=%lu seq=%lu\r\n",
-                   (unsigned)slot, (unsigned)(task_id >> 32), (unsigned)task_id,
-                   (unsigned long)((meta != NULL) ? meta->sample_period_ms : 0u),
-                   (unsigned long)((meta != NULL) ? meta->duration_ms : 0u),
-                   (unsigned long)seq);
+    /* NOR/SPI 偶发抖动会导致一次读回的内容 CRC 不过关，被误判为空槽（0xE0 列表变空、
+       0xE1 meta=0）。这里最多重试 3 次，读之间插入短延时；真正空槽读出全 0xFF，
+       重试也无副作用（只是多读两次）。 */
+    for (uint32_t attempt = 0u; attempt < 3u; attempt++)
+    {
+        (void)memset(out, 0, sizeof(*out));
+        if (!app_store_flash_read_locked(base, out, (uint32_t)sizeof(*out)))
+        {
+            OSA_TimeDelay(1u);
+            continue;
+        }
+        if (out->magic != APP_STORE_MAGIC)
+        {
+            app_store_set_err(APP_STORE_ERR_HEADER_MAGIC, kStatus_Fail, base, (uint32_t)sizeof(*out));
+            OSA_TimeDelay(1u);
+            continue;
+        }
+        if (out->version != APP_STORE_VERSION)
+        {
+            app_store_set_err(APP_STORE_ERR_HEADER_VERSION, kStatus_Fail, base, (uint32_t)sizeof(*out));
+            OSA_TimeDelay(1u);
+            continue;
+        }
+
+        const uint32_t crc_len = (uint32_t)(offsetof(app_store_header_t, header_crc) - offsetof(app_store_header_t, version));
+        const uint32_t crc = BSP_CRC_Calculate(&out->version, crc_len, BSP_CRC_WIDTH_32);
+        if (crc != out->header_crc)
+        {
+            app_store_set_err(APP_STORE_ERR_HEADER_CRC, kStatus_Fail, base, (uint32_t)sizeof(*out));
+            OSA_TimeDelay(1u);
+            continue;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+/* 提交一个完整 header 到指定 slot：擦除 header 扇区（不动数据），重算 CRC，magic 最后写。
+   src 中除 magic/version/header_crc 外的字段都会被写入。 */
+static bool app_store_header_commit_locked(uint8_t slot, const app_store_header_t *src)
+{
+    const uint32_t base = app_store_slot_base(slot);
+    app_store_header_t h = *src;
+    h.magic   = APP_STORE_MAGIC;
+    h.version = APP_STORE_VERSION;
+
+    /* 诊断：确认 header 是否被(重)写，以及写入的 meta(周期/时长)/状态/中断原因 */
+    char tid[17];
+    BSP_UART_FormatU64LE(tid, h.task_id);
+    BSP_UART_Print("[STO] hdr write slot=%u task=%s per=%lu dur=%lu seq=%lu state=%lu epoch=%lu irq=0x%08lX cnt=%lu\r\n",
+                   (unsigned)slot, tid,
+                   (unsigned long)h.meta.sample_period_ms,
+                   (unsigned long)h.meta.duration_ms,
+                   (unsigned long)h.reserved[0], (unsigned long)h.reserved[1], (unsigned long)h.reserved[2],
+                   (unsigned long)h.reserved[3], (unsigned long)h.reserved[4]);
 
     if (!app_store_flash_erase_sector_locked(base))
     {
         return false;
     }
 
-    app_store_header_t h;
-    (void)memset(&h, 0xFF, sizeof(h));
-    h.magic   = APP_STORE_MAGIC;
-    h.version = APP_STORE_VERSION;
-    h.task_id = task_id;
-    if (meta != NULL)
-    {
-        h.meta = *meta;
-    }
-    h.reserved[0] = seq;
     const uint32_t crc_len = (uint32_t)(offsetof(app_store_header_t, header_crc) - offsetof(app_store_header_t, version));
     h.header_crc = BSP_CRC_Calculate(&h.version, crc_len, BSP_CRC_WIDTH_32);
 
@@ -685,6 +699,21 @@ static bool app_store_header_write_locked(uint8_t slot, uint64_t task_id, const 
         return false;
     }
     return true;
+}
+
+/* 依据新建任务的参数填充一个 header 结构体（reserved[3]/[4] 保持未用=0xFF） */
+static void app_store_header_prepare(app_store_header_t *h, uint64_t task_id, const app_storage_task_meta_t *meta,
+                                     uint32_t seq, app_store_state_t state, uint32_t host_epoch_s)
+{
+    (void)memset(h, 0xFF, sizeof(*h));
+    h->task_id = task_id;
+    if (meta != NULL)
+    {
+        h->meta = *meta;
+    }
+    h->reserved[0] = seq;
+    h->reserved[1] = (uint32_t)state;
+    h->reserved[2] = host_epoch_s;
 }
 
 static uint32_t app_store_scan_committed_size_locked(uint32_t base, uint32_t capacity, uint32_t record_size)
@@ -826,7 +855,8 @@ static uint8_t app_store_select_evict_slot_locked(void)
     return best_slot;
 }
 
-static bool app_store_open_locked(uint64_t task_id, bool create, const app_storage_task_meta_t *meta)
+static bool app_store_open_locked(uint64_t task_id, bool create, const app_storage_task_meta_t *meta,
+                                  app_store_state_t state, uint32_t host_epoch_s)
 {
     /* 仅对"只读打开"(create=false) 走提前返回;create=true 必须继续往下,
      * 否则同一 task_id 从初测切到正式时 header 不会被重写,meta(周期/时长)会残留初测值。 */
@@ -851,7 +881,9 @@ static bool app_store_open_locked(uint64_t task_id, bool create, const app_stora
     if ((found_slot != 0xFFu) && create)
     {
         const uint32_t seq = (s_task_seq_next != 0u) ? s_task_seq_next++ : 1u;
-        if (!app_store_header_write_locked(found_slot, task_id, meta, seq))
+        app_store_header_t nh;
+        app_store_header_prepare(&nh, task_id, meta, seq, state, host_epoch_s);
+        if (!app_store_header_commit_locked(found_slot, &nh))
         {
             return false;
         }
@@ -878,7 +910,9 @@ static bool app_store_open_locked(uint64_t task_id, bool create, const app_stora
         }
 
         const uint32_t seq = (s_task_seq_next != 0u) ? s_task_seq_next++ : 1u;
-        if (!app_store_header_write_locked(found_slot, task_id, meta, seq))
+        app_store_header_t nh;
+        app_store_header_prepare(&nh, task_id, meta, seq, state, host_epoch_s);
+        if (!app_store_header_commit_locked(found_slot, &nh))
         {
             return false;
         }
@@ -993,6 +1027,12 @@ bool APP_Storage_BeginTask(uint64_t task_id, const app_storage_task_meta_t *meta
 
 bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *meta, app_storage_phase_t phase)
 {
+    return APP_Storage_BeginTaskEx2(task_id, meta, phase, APP_STORE_STATE_RUNNING, 0u);
+}
+
+bool APP_Storage_BeginTaskEx2(uint64_t task_id, const app_storage_task_meta_t *meta, app_storage_phase_t phase,
+                              app_store_state_t state, uint32_t host_epoch_s)
+{
     (void)phase;
 
     app_store_lock();
@@ -1003,16 +1043,16 @@ bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *me
         if ((now - s_last_begin_fail_log_tick) > pdMS_TO_TICKS(2000U))
         {
             s_last_begin_fail_log_tick = now;
-            const uint32_t hi = (uint32_t)(task_id >> 32);
-            const uint32_t lo = (uint32_t)(task_id);
-            BSP_UART_Print("[STO] BeginTask fail: task=%08X%08X err=%u st=%d addr=0x%08X size=%u inited=%u layout=%u sector=%u mem=%u usable=%u slot=%u pre=%u\r\n",
-                           hi, lo, (unsigned)s_last_err, (int)s_last_status, (unsigned)s_last_addr, (unsigned)s_last_size,
+            char tid[17];
+            BSP_UART_FormatU64LE(tid, task_id);
+            BSP_UART_Print("[STO] BeginTask fail: task=%s err=%u st=%d addr=0x%08X size=%u inited=%u layout=%u sector=%u mem=%u usable=%u slot=%u pre=%u\r\n",
+                           tid, (unsigned)s_last_err, (int)s_last_status, (unsigned)s_last_addr, (unsigned)s_last_size,
                            (unsigned)s_flash_inited, (unsigned)s_layout_ready, (unsigned)s_sector_size, (unsigned)s_mem_size,
                            (unsigned)s_usable_size, (unsigned)s_slot_size, (unsigned)s_pre_capacity);
         }
         return false;
     }
-    const bool ok = app_store_open_locked(task_id, true, meta);
+    const bool ok = app_store_open_locked(task_id, true, meta, state, host_epoch_s);
     app_store_unlock();
     if (ok)
     {
@@ -1024,15 +1064,161 @@ bool APP_Storage_BeginTaskEx(uint64_t task_id, const app_storage_task_meta_t *me
         if ((now - s_last_begin_fail_log_tick) > pdMS_TO_TICKS(2000U))
         {
             s_last_begin_fail_log_tick = now;
-            const uint32_t hi = (uint32_t)(task_id >> 32);
-            const uint32_t lo = (uint32_t)(task_id);
-            BSP_UART_Print("[STO] BeginTask fail: task=%08X%08X err=%u st=%d addr=0x%08X size=%u inited=%u layout=%u sector=%u mem=%u usable=%u slot=%u pre=%u\r\n",
-                           hi, lo, (unsigned)s_last_err, (int)s_last_status, (unsigned)s_last_addr, (unsigned)s_last_size,
+            char tid[17];
+            BSP_UART_FormatU64LE(tid, task_id);
+            BSP_UART_Print("[STO] BeginTask fail: task=%s err=%u st=%d addr=0x%08X size=%u inited=%u layout=%u sector=%u mem=%u usable=%u slot=%u pre=%u\r\n",
+                           tid, (unsigned)s_last_err, (int)s_last_status, (unsigned)s_last_addr, (unsigned)s_last_size,
                            (unsigned)s_flash_inited, (unsigned)s_layout_ready, (unsigned)s_sector_size, (unsigned)s_mem_size,
                            (unsigned)s_usable_size, (unsigned)s_slot_size, (unsigned)s_pre_capacity);
         }
     }
     return ok;
+}
+
+bool APP_Storage_SetTaskState(uint64_t task_id, app_store_state_t state)
+{
+    bool ok = false;
+    app_store_lock();
+    if (app_store_flash_init_locked())
+    {
+        uint8_t slot = 0xFFu;
+        app_store_header_t h;
+        for (uint8_t s = 0u; s < (uint8_t)APP_STORE_SLOT_COUNT; s++)
+        {
+            if (app_store_header_read_locked(s, &h) && (h.task_id == task_id))
+            {
+                slot = s;
+                break;
+            }
+        }
+        if (slot != 0xFFu)
+        {
+            /* 保留 meta / seq / epoch / 中断原因，仅改写状态位（header 独占一个扇区，不动数据） */
+            h.reserved[1] = (uint32_t)state;
+            ok = app_store_header_commit_locked(slot, &h);
+        }
+    }
+    app_store_unlock();
+
+    char tid[17];
+    BSP_UART_FormatU64LE(tid, task_id);
+    BSP_UART_Print("[STO] SetTaskState task=%s state=%lu ok=%u\r\n",
+                   tid, (unsigned long)state, (unsigned)(ok ? 1U : 0U));
+    return ok;
+}
+
+bool APP_Storage_SetTaskInterruptReason(uint64_t task_id, uint32_t reset_status, uint32_t reset_count)
+{
+    bool ok = false;
+    app_store_lock();
+    if (app_store_flash_init_locked())
+    {
+        uint8_t slot = 0xFFu;
+        app_store_header_t h;
+        for (uint8_t s = 0u; s < (uint8_t)APP_STORE_SLOT_COUNT; s++)
+        {
+            if (app_store_header_read_locked(s, &h) && (h.task_id == task_id))
+            {
+                slot = s;
+                break;
+            }
+        }
+        if (slot != 0xFFu)
+        {
+            /* 保留 meta/seq/state/epoch，写入"中断本次采集的复位原因/计数"（reserved[3]/[4]） */
+            h.reserved[3] = reset_status;
+            h.reserved[4] = reset_count;
+            ok = app_store_header_commit_locked(slot, &h);
+        }
+    }
+    app_store_unlock();
+
+    char tid[17];
+    BSP_UART_FormatU64LE(tid, task_id);
+    BSP_UART_Print("[STO] SetIrqReason task=%s irq=0x%08lX cnt=%lu ok=%u\r\n",
+                   tid, (unsigned long)reset_status, (unsigned long)reset_count, (unsigned)(ok ? 1U : 0U));
+    return ok;
+}
+
+bool APP_Storage_GetTaskInterruptReason(uint64_t task_id, uint32_t *out_status, uint32_t *out_count)
+{
+    if ((out_status == NULL) || (out_count == NULL))
+    {
+        return false;
+    }
+
+    bool ok = false;
+    app_store_lock();
+    if (app_store_flash_init_locked())
+    {
+        app_store_header_t h;
+        for (uint8_t s = 0u; s < (uint8_t)APP_STORE_SLOT_COUNT; s++)
+        {
+            if (app_store_header_read_locked(s, &h) && (h.task_id == task_id))
+            {
+                *out_status = h.reserved[3];
+                *out_count  = h.reserved[4];
+                ok = true;
+                break;
+            }
+        }
+    }
+    app_store_unlock();
+    return ok;
+}
+
+bool APP_Storage_FindResumable(uint64_t *out_task_id, app_storage_task_meta_t *out_meta,
+                               app_store_state_t *out_state, uint32_t *out_host_epoch_s)
+{
+    if ((out_task_id == NULL) || (out_meta == NULL) || (out_state == NULL) || (out_host_epoch_s == NULL))
+    {
+        return false;
+    }
+
+    bool found = false;
+    uint32_t best_seq = 0u;
+    app_store_header_t best;
+    (void)memset(&best, 0, sizeof(best));
+
+    app_store_lock();
+    if (app_store_flash_init_locked())
+    {
+        app_store_header_t h;
+        for (uint8_t s = 0u; s < (uint8_t)APP_STORE_SLOT_COUNT; s++)
+        {
+            if (!app_store_header_read_locked(s, &h))
+            {
+                continue;
+            }
+            if (h.task_id == 0u)
+            {
+                continue;
+            }
+            if (h.reserved[1] != (uint32_t)APP_STORE_STATE_RUNNING)
+            {
+                continue;
+            }
+            const uint32_t seq = h.reserved[0];
+            if (!found || (seq > best_seq))
+            {
+                found = true;
+                best_seq = seq;
+                best = h;
+            }
+        }
+    }
+    app_store_unlock();
+
+    if (!found)
+    {
+        return false;
+    }
+
+    *out_task_id      = best.task_id;
+    *out_meta         = best.meta;
+    *out_state        = (app_store_state_t)best.reserved[1];
+    *out_host_epoch_s = best.reserved[2];
+    return true;
 }
 
 bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t record_size)
@@ -1048,7 +1234,7 @@ bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t recor
     uint32_t before_size = 0u;
     uint32_t next_erase = 0u;
     app_store_lock();
-    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL, APP_STORE_STATE_UNKNOWN, 0u))
     {
         const uint32_t base = app_store_data_base(s_active.slot);
         cap = app_store_data_capacity();
@@ -1082,10 +1268,10 @@ bool APP_Storage_AppendData(uint64_t task_id, const void *record, uint32_t recor
         if ((now - s_last_append_fail_log_tick) > pdMS_TO_TICKS(2000U))
         {
             s_last_append_fail_log_tick = now;
-            const uint32_t hi = (uint32_t)(task_id >> 32);
-            const uint32_t lo = (uint32_t)(task_id);
-            BSP_UART_Print("[STO] AppendData fail: task=%08X%08X err=%u st=%d src=%c addr=0x%08X size=%u data=%u cap=%u next=0x%08X\r\n",
-                           hi, lo, (unsigned)s_last_err, (int)s_last_status,
+            char tid[17];
+            BSP_UART_FormatU64LE(tid, task_id);
+            BSP_UART_Print("[STO] AppendData fail: task=%s err=%u st=%d src=%c addr=0x%08X size=%u data=%u cap=%u next=0x%08X\r\n",
+                           tid, (unsigned)s_last_err, (int)s_last_status,
                            (s_last_err == APP_STORE_ERR_VERIFY_MISMATCH) ? 'V' : 'H',
                            (unsigned)s_last_addr, (unsigned)s_last_size, (unsigned)before_size, (unsigned)cap, (unsigned)next_erase);
         }
@@ -1106,7 +1292,7 @@ bool APP_Storage_AppendPreData(uint64_t task_id, const void *record, uint32_t re
     uint32_t before_size = 0u;
     uint32_t next_erase = 0u;
     app_store_lock();
-    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL, APP_STORE_STATE_UNKNOWN, 0u))
     {
         const uint32_t base = app_store_pre_base(s_active.slot);
         cap = app_store_pre_capacity();
@@ -1140,10 +1326,10 @@ bool APP_Storage_AppendPreData(uint64_t task_id, const void *record, uint32_t re
         if ((now - s_last_append_fail_log_tick) > pdMS_TO_TICKS(2000U))
         {
             s_last_append_fail_log_tick = now;
-            const uint32_t hi = (uint32_t)(task_id >> 32);
-            const uint32_t lo = (uint32_t)(task_id);
-            BSP_UART_Print("[STO] AppendPreData fail: task=%08X%08X err=%u st=%d src=%c addr=0x%08X size=%u pre=%u cap=%u next=0x%08X\r\n",
-                           hi, lo, (unsigned)s_last_err, (int)s_last_status,
+            char tid[17];
+            BSP_UART_FormatU64LE(tid, task_id);
+            BSP_UART_Print("[STO] AppendPreData fail: task=%s err=%u st=%d src=%c addr=0x%08X size=%u pre=%u cap=%u next=0x%08X\r\n",
+                           tid, (unsigned)s_last_err, (int)s_last_status,
                            (s_last_err == APP_STORE_ERR_VERIFY_MISMATCH) ? 'V' : 'H',
                            (unsigned)s_last_addr, (unsigned)s_last_size, (unsigned)before_size, (unsigned)cap, (unsigned)next_erase);
         }
@@ -1159,7 +1345,7 @@ int APP_Storage_ReadData(uint64_t task_id, uint32_t offset, void *out, uint32_t 
     }
     int ret = -1;
     app_store_lock();
-    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL, APP_STORE_STATE_UNKNOWN, 0u))
     {
         if (offset < s_active.data_size)
         {
@@ -1191,7 +1377,7 @@ int APP_Storage_ReadPreData(uint64_t task_id, uint32_t offset, void *out, uint32
     }
     int ret = -1;
     app_store_lock();
-    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL, APP_STORE_STATE_UNKNOWN, 0u))
     {
         if (offset < s_active.pre_size)
         {
@@ -1277,7 +1463,7 @@ bool APP_Storage_GetDataSize(uint64_t task_id, uint32_t *out_size)
     }
     bool ok = false;
     app_store_lock();
-    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL, APP_STORE_STATE_UNKNOWN, 0u))
     {
         *out_size = s_active.data_size;
         ok = true;
@@ -1294,7 +1480,7 @@ bool APP_Storage_GetPreDataSize(uint64_t task_id, uint32_t *out_size)
     }
     bool ok = false;
     app_store_lock();
-    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL))
+    if (app_store_flash_init_locked() && app_store_open_locked(task_id, false, NULL, APP_STORE_STATE_UNKNOWN, 0u))
     {
         *out_size = s_active.pre_size;
         ok = true;

@@ -58,6 +58,8 @@ extern EventGroupHandle_t g_system_event_group;
 #define TASK_EVENT_BIT_COLLECTION_PULSE  (1U << 6)
 // 擦除Flash进行中
 #define TASK_EVENT_BIT_ERASING           (1U << 7)
+// 采集结束待落盘（STOP 或自然采完），由存储任务写 COMPLETED
+#define TASK_EVENT_BIT_FINALIZE_PENDING  (1U << 8)
 
 
 // 初始化任务管道资源
@@ -83,7 +85,24 @@ void TASK_StartCollect(uint64_t task_id,
                        uint32_t period_ms,
                        bool time_valid,
                        uint32_t forced_total_count);
+// 续采：从复位前中断处恢复采集。host_epoch_s=最后一条记录的绝对秒，
+// last_ts_ms=最后一条记录的毫秒部分，remaining_count=最后一条记录的剩余条数。
+void TASK_StartCollectResume(uint64_t task_id,
+                             uint32_t host_epoch_s,
+                             uint32_t last_ts_ms,
+                             uint32_t duration_s,
+                             uint32_t period_ms,
+                             uint32_t remaining_count);
 bool TASK_StopCollect(uint64_t task_id);
+
+// 当前采集计划是否来自续采（而非全新 START）
+bool TASK_IsResumed(void);
+
+// 开机续采入口：扫描 flash 中的 RUNNING 任务并恢复采集
+void TASK_ResumeCollect(void);
+
+// 请求把当前任务状态落盘为 COMPLETED（存储任务消费）
+void TASK_RequestFinalize(void);
 
 uint32_t TASK_GetTaskGeneration(void);
 

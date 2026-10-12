@@ -33,17 +33,39 @@ static bool task_storage_begin_if_needed(uint64_t task_id)
         return false;
     }
 
+    if (TASK_IsResumed())
+    {
+        /* 续采：任务 header 已存在，绝不能走 BeginTaskEx（会擦除已采数据），
+           直接沿用已存在任务，后续 AppendData 以 create=false 打开 */
+        s_storage_ready = true;
+        s_storage_task_gen = TASK_GetTaskGeneration();
+        if (g_system_event_group != NULL)
+        {
+            (void)xEventGroupSetBits(g_system_event_group, TASK_EVENT_BIT_STORAGE_READY);
+        }
+        char tid[17];
+        BSP_UART_FormatU64LE(tid, task_id);
+        BSP_UART_Print("[STO] resume session task=%s\r\n", tid);
+        return true;
+    }
+
+    uint32_t host_epoch_s = 0U;
+    uint32_t local_base_ms = 0U;
+    const bool time_valid = TASK_GetTimeBase(&host_epoch_s, &local_base_ms);
+
     app_storage_task_meta_t meta;
     (void)memset(&meta, 0, sizeof(meta));
     meta.task_id            = task_id;
-    meta.start_timestamp_ms = TASK_GetLocalBaseMs();
+    meta.start_timestamp_ms = time_valid ? local_base_ms : TASK_GetLocalBaseMs();
     meta.sample_period_ms   = TASK_GetCollectPeriodMs();
     meta.duration_ms        = TASK_GetCollectDurationS() * 1000U;
     meta.record_size        = (uint32_t)sizeof(sensor_record_t);
     meta.record_version     = 2U;
 
     const app_storage_phase_t phase = TASK_IsPretest() ? APP_STORAGE_PHASE_PRETEST : APP_STORAGE_PHASE_FORMAL;
-    if (APP_Storage_BeginTaskEx(task_id, &meta, phase))
+    /* 正式采集落盘 RUNNING（供复位后续采）；初测/selftest 落盘 COMPLETED（不可续采） */
+    const app_store_state_t state = TASK_IsPretest() ? APP_STORE_STATE_COMPLETED : APP_STORE_STATE_RUNNING;
+    if (APP_Storage_BeginTaskEx2(task_id, &meta, phase, state, time_valid ? host_epoch_s : 0U))
     {
         s_storage_ready = true;
         s_storage_task_gen = TASK_GetTaskGeneration();
@@ -158,6 +180,21 @@ void TASK_StorageTask(void *pvParameters)
                     s_pending_fail_count = 0U;
                 }
                 vTaskDelay(pdMS_TO_TICKS(20U));
+            }
+        }
+
+        /* 自然采完：队列清空后把状态落盘为 COMPLETED，防止复位后误续采 */
+        if (s_storage_ready && (g_system_event_group != NULL) &&
+            ((xEventGroupGetBits(g_system_event_group) & TASK_EVENT_BIT_FINALIZE_PENDING) != 0U) &&
+            (uxQueueMessagesWaiting(g_sensor_data_queue) == 0U))
+        {
+            if (APP_Storage_SetTaskState(s_storage_task_id, APP_STORE_STATE_COMPLETED))
+            {
+                (void)xEventGroupClearBits(g_system_event_group, TASK_EVENT_BIT_FINALIZE_PENDING);
+            }
+            else
+            {
+                vTaskDelay(pdMS_TO_TICKS(50U));
             }
         }
     }

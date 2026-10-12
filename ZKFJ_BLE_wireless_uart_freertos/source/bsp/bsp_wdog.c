@@ -22,6 +22,7 @@ static bool s_inited;
 /* 上电时锁存的复位原因，供复位后随时查询 */
 static bool     s_reset_latched;
 static uint32_t s_reset_latched_srs;
+static uint32_t s_reset_latched_count;
 
 typedef struct
 {
@@ -79,6 +80,16 @@ static uint16_t bsp_wdog_ms_to_timeout_ticks(uint32_t timeout_ms, wdog32_clock_p
     return (uint16_t)ticks;
 }
 
+static uint32_t bsp_wdog_read_reset_count(void)
+{
+#if (defined(FSL_FEATURE_CMC_HAS_RSTCNT_REGISTER) && (FSL_FEATURE_CMC_HAS_RSTCNT_REGISTER != 0))
+    /* 自上次冷复位以来的复位序列计数（只读），用于判断是否在反复复位 */
+    return (uint32_t)CMC_GetResetCount(CMC0);
+#else
+    return 0U;
+#endif
+}
+
 void BSP_WDOG_Init(const bsp_wdog_config_t *cfg)
 {
     if ((cfg == NULL) || (cfg->timeout_ms == 0U))
@@ -126,8 +137,9 @@ uint32_t BSP_WDOG_GetResetStatus(void)
     {
         /* 首次读取发生在启动初始化早期，此时 SSRS 记录的正是本次复位的原因；
          * 锁存下来，便于后续（如 0xE1 查询）追溯，不受软件清零影响。 */
-        s_reset_latched_srs = srs;
-        s_reset_latched     = true;
+        s_reset_latched_srs   = srs;
+        s_reset_latched_count = bsp_wdog_read_reset_count();
+        s_reset_latched       = true;
     }
     return srs;
 }
@@ -149,11 +161,18 @@ uint32_t BSP_WDOG_GetLatchedResetStatus(void)
     return s_reset_latched_srs;
 }
 
+uint32_t BSP_WDOG_GetLatchedResetCount(void)
+{
+    (void)BSP_WDOG_GetResetStatus(); /* 确保已完成锁存 */
+    return s_reset_latched_count;
+}
+
 void BSP_WDOG_CaptureBootResetStatus(void)
 {
     /* 锁存本次复位原因（即导致本次开机的复位来源） */
-    s_reset_latched_srs = CMC_GetStickySystemResetStatus(CMC0);
-    s_reset_latched     = true;
+    s_reset_latched_srs   = CMC_GetStickySystemResetStatus(CMC0);
+    s_reset_latched_count = bsp_wdog_read_reset_count();
+    s_reset_latched       = true;
 
     /* 清零 SSRS 中所有已知来源位（写 1 清除）。
      * SSRS 是"自上次冷复位以来、未被软件清除的"来源累加器，不清零会让旧位置残留，
