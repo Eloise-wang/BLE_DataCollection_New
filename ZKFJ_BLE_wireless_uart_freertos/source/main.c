@@ -24,7 +24,6 @@
 #include "bsp_uart.h"
 #include "bsp_wdog.h"
 #include "fsl_os_abstraction.h"
-#include "fsl_cmc.h"
 #include "task_manager.h"
 
 #include "FreeRTOS.h"
@@ -57,14 +56,14 @@ static void start_task(void *argument)
     APP_InitServices();
 
     BSP_UART_Init();
-    const uint32_t srs = BSP_WDOG_GetResetStatus();
-    const bool wdog_reset = BSP_WDOG_WasResetByWatchdog();
-    BSP_UART_Print("reset_status=0x%08lX wdog=%u\r\n", (unsigned long)srs, (unsigned)wdog_reset);
-    if (wdog_reset)
-    {
-        const uint32_t mask = (uint32_t)kCMC_Watchdog0Reset | (uint32_t)kCMC_Watchdog1Reset;
-        BSP_WDOG_ClearResetStatus(mask);
-    }
+    /* 锁存本次复位原因并清零 SSRS，供启动打印及 0xE1 事后查询 */
+    BSP_WDOG_CaptureBootResetStatus();
+    const uint32_t srs = BSP_WDOG_GetLatchedResetStatus();
+    const bool wdog_reset = BSP_WDOG_WasLatchedResetByWatchdog();
+    char reset_reason[96];
+    (void)BSP_WDOG_FormatResetReason(srs, reset_reason, sizeof(reset_reason));
+    BSP_UART_Print("reset_status=0x%08lX wdog=%u reason=%s\r\n",
+                   (unsigned long)srs, (unsigned)wdog_reset, reset_reason);
 
     TASK_InitPipelineResources();
     TASK_CreateAllTasks();

@@ -5,7 +5,7 @@ PRIMARY_SERVICE(service_gatt, gBleSig_GenericAttributeProfile_d)
 
 PRIMARY_SERVICE(service_gap, gBleSig_GenericAccessProfile_d)
     CHARACTERISTIC(char_device_name, gBleSig_GapDeviceName_d, (gGattCharPropRead_c) )
-            VALUE(value_device_name, gBleSig_GapDeviceName_d, (gPermissionFlagReadable_c), 8, "ZZL_0001")
+            VALUE(value_device_name, gBleSig_GapDeviceName_d, (gPermissionFlagReadable_c), 8, "ZZL_0002")
     CHARACTERISTIC(char_appearance, gBleSig_GapAppearance_d, (gGattCharPropRead_c) )
             VALUE(value_appearance, gBleSig_GapAppearance_d, (gPermissionFlagReadable_c), 2, 0x00, 0x00)
     CHARACTERISTIC(char_security_levels, gBleSig_GattSecurityLevels_d, (gGattCharPropRead_c) )
@@ -36,7 +36,7 @@ PRIMARY_SERVICE(service_device_info, gBleSig_DeviceInformationService_d)
     CHARACTERISTIC(char_fw_rev, gBleSig_FirmwareRevisionString_d, (gGattCharPropRead_c) )
         VALUE(value_fw_rev, gBleSig_FirmwareRevisionString_d, (gPermissionFlagReadable_c), 5, "1.1.1")
     CHARACTERISTIC(char_sw_rev, gBleSig_SoftwareRevisionString_d, (gGattCharPropRead_c) )
-        VALUE(value_sw_rev, gBleSig_SoftwareRevisionString_d, (gPermissionFlagReadable_c), 5, "1.1.4")
+        VALUE(value_sw_rev, gBleSig_SoftwareRevisionString_d, (gPermissionFlagReadable_c), 5, "1.1.1")
 
 /* Placed at end of file due to macro interpretation of line numbers. */
 /*

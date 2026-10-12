@@ -16,6 +16,7 @@
 
 #include "app_storage.h"
 #include "bsp_uart.h"
+#include "bsp_wdog.h"
 #include "proto_frame.h"
 #include "task_manager.h"
 
@@ -594,6 +595,17 @@ static void proto_handle_debug_query(const proto_cmd_msg_t *msg)
             if (rec_size < 4U) { rec_size = 20U; }
             BSP_UART_Print("  record_count=%lu\r\n", (unsigned long)(data_bytes / rec_size));
         }
+    }
+
+    /* 复位原因（本次上电时锁存，便于事后调查异常复位/看门狗复位） */
+    {
+        const uint32_t srs = BSP_WDOG_GetLatchedResetStatus();
+        char reason[96];
+        (void)BSP_WDOG_FormatResetReason(srs, reason, sizeof(reason));
+        BSP_UART_Print("  reset_status=0x%08lX wdog=%u reason=%s\r\n",
+                       (unsigned long)srs,
+                       (unsigned)(BSP_WDOG_WasLatchedResetByWatchdog() ? 1U : 0U),
+                       reason);
     }
     BSP_UART_Print("[DBG] ===================\r\n");
 }
