@@ -648,6 +648,14 @@ static bool app_store_header_read_locked(uint8_t slot, app_store_header_t *out)
 static bool app_store_header_write_locked(uint8_t slot, uint64_t task_id, const app_storage_task_meta_t *meta, uint32_t seq)
 {
     const uint32_t base = app_store_slot_base(slot);
+
+    /* 诊断：确认 header 是否被(重)写，以及写入的 meta(周期/时长) */
+    BSP_UART_Print("[STO] hdr write slot=%u task=%08X%08X per=%lu dur=%lu seq=%lu\r\n",
+                   (unsigned)slot, (unsigned)(task_id >> 32), (unsigned)task_id,
+                   (unsigned long)((meta != NULL) ? meta->sample_period_ms : 0u),
+                   (unsigned long)((meta != NULL) ? meta->duration_ms : 0u),
+                   (unsigned long)seq);
+
     if (!app_store_flash_erase_sector_locked(base))
     {
         return false;
@@ -820,7 +828,9 @@ static uint8_t app_store_select_evict_slot_locked(void)
 
 static bool app_store_open_locked(uint64_t task_id, bool create, const app_storage_task_meta_t *meta)
 {
-    if (s_active.valid && (s_active.task_id == task_id))
+    /* 仅对"只读打开"(create=false) 走提前返回;create=true 必须继续往下,
+     * 否则同一 task_id 从初测切到正式时 header 不会被重写,meta(周期/时长)会残留初测值。 */
+    if (!create && s_active.valid && (s_active.task_id == task_id))
     {
         return true;
     }
